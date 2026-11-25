@@ -1,0 +1,154 @@
+[started step-0 on :4100 pid=12693]
+== create list
+{"slug":"projet-script-alert-1-script-84be65","adminToken":"J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5","title":"Projet <script>alert(1)</script>","description":"Desc <img src=x onerror=alert(1)>\n\nP2"}
+== public page (escaping)
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+X-Frame-Options: DENY
+  <title>Projet &lt;script&gt;alert(1)&lt;/script&gt; — Liste d’attente</title>
+      <h1 class="wl-title">Projet &lt;script&gt;alert(1)&lt;/script&gt;</h1>
+      <div class="wl-desc"><p>Desc &lt;img src=x onerror=alert(1)&gt;</p><p>P2</p></div>
+== signup
+>>> POST http://127.0.0.1:4100/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"alice@example.com"}
+{"ok":true,"position":1,"already":false,"total":1}
+<<< HTTP 200
+>>> POST http://127.0.0.1:4100/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"Alice@Example.com"}
+{"ok":true,"position":1,"already":true,"total":1}
+<<< HTTP 200
+>>> POST http://127.0.0.1:4100/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"not-an-email"}
+{"error":"Adresse email invalide."}
+<<< HTTP 400
+>>> POST http://127.0.0.1:4100/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"=cmd|calc@evil.co"}
+{"ok":true,"position":2,"already":false,"total":2}
+<<< HTTP 200
+>>> POST http://127.0.0.1:4100/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"\"><svg/onload=alert(1)>@x.co"}
+{"error":"Adresse email invalide."}
+<<< HTTP 400
+>>> POST http://127.0.0.1:4100/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"a<b>@x.co"}
+{"error":"Adresse email invalide."}
+<<< HTTP 400
+== form post no JS
+        <h2 data-success-title>C’est noté !</h2>
+        <p>Vous êtes <strong data-position>n°3</strong> sur la liste. On vous prévient dès que c’est prêt.</p>
+HTTP 200
+                 placeholder="vous@exemple.com" value="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" aria-invalid="true" aria-describedby="wl-error">
+        <p class="wl-error" id="wl-error" data-error role="alert">Adresse email invalide.</p>
+HTTP 400
+== dashboard
+>>> GET http://127.0.0.1:4100/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 
+{"list":{"title":"Projet <script>alert(1)</script>","description":"Desc <img src=x onerror=alert(1)>\n\nP2","slug":"projet-script-alert-1-script-84be65","createdAt":1795622837282},"total":3,"subscribers":[{"id":4,"email":"bob@example.com","createdAt":1795622839163,"position":3},{"id":3,"email":"=cmd|calc@evil.co","createdAt":1795622838690,"position":2},{"id":1,"email":"alice@example.com","createdAt":1795622838047,"position":1}]}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4100/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 -o /dev/null
+
+<<< HTTP 200
+>>> GET http://127.0.0.1:4100/api/admin/wrongtoken 
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4100/admin/wrongtoken -o /dev/null
+
+<<< HTTP 404
+== edit
+>>> PATCH http://127.0.0.1:4100/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 -H Content-Type:application/json -d {"title":"Nouveau titre"}
+{"list":{"title":"Nouveau titre","description":"Desc <img src=x onerror=alert(1)>\n\nP2","slug":"projet-script-alert-1-script-84be65","createdAt":1795622837282},"total":3,"subscribers":[{"id":4,"email":"bob@example.com","createdAt":1795622839163,"position":3},{"id":3,"email":"=cmd|calc@evil.co","createdAt":1795622838690,"position":2},{"id":1,"email":"alice@example.com","createdAt":1795622838047,"position":1}]}
+<<< HTTP 200
+>>> PATCH http://127.0.0.1:4100/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 -H Content-Type:application/json -d {"title":"  "}
+{"error":"Le titre est obligatoire."}
+<<< HTTP 400
+== export
+>>> GET http://127.0.0.1:4100/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5/export.csv -D -
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+X-Frame-Options: DENY
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="projet-script-alert-1-script-84be65-inscrits.csv"
+Cache-Control: no-store
+Date: Wed, 25 Nov 2026 16:07:20 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+﻿position,email,date_inscription
+1,alice@example.com,2026-11-25T16:07:18.047Z
+2,'=cmd|calc@evil.co,2026-11-25T16:07:18.690Z
+3,bob@example.com,2026-11-25T16:07:19.163Z
+
+<<< HTTP 200
+== delete subscriber 1 then recheck
+>>> DELETE http://127.0.0.1:4100/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5/subscribers/1 
+{"ok":true}
+<<< HTTP 200
+>>> DELETE http://127.0.0.1:4100/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5/subscribers/999 
+{"error":"Inscrit introuvable."}
+<<< HTTP 404
+== summary endpoint (token oracle?)
+>>> POST http://127.0.0.1:4100/api/lists/summary -H Content-Type:application/json -d {"tokens":["J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5","x"]}
+{"lists":[{"token":"J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5","title":"Nouveau titre","slug":"projet-script-alert-1-script-84be65","total":2,"createdAt":1795622837282}]}
+<<< HTTP 200
+== no-auth list enumeration attempts
+>>> GET http://127.0.0.1:4100/api/lists 
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4100/api/admin/ 
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4100/static/..%2fserver.js -o /dev/null
+
+<<< HTTP 404
+>>> GET http://127.0.0.1:4100/static/../server.js --path-as-is -o /dev/null
+
+<<< HTTP 404
+>>> GET http://127.0.0.1:4100/static/..%5cserver.js --path-as-is -o /dev/null
+
+<<< HTTP 404
+>>> GET http://127.0.0.1:4100/static/dashboard.html -o /dev/null
+
+<<< HTTP 200
+== restart persistence
+[stopped pid=12693]
+[started step-0 on :4100 pid=12809]
+>>> GET http://127.0.0.1:4100/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 
+{"list":{"title":"Nouveau titre","description":"Desc <img src=x onerror=alert(1)>\n\nP2","slug":"projet-script-alert-1-script-84be65","createdAt":1795622837282},"total":2,"subscribers":[{"id":4,"email":"bob@example.com","createdAt":1795622839163,"position":2},{"id":3,"email":"=cmd|calc@evil.co","createdAt":1795622838690,"position":1}]}
+<<< HTTP 200
+== rate limit subscribe (25 rapid)
+200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 429 429 429 429 429 
+== CSRF: cross-origin POST create + DELETE with token
+>>> POST http://127.0.0.1:4100/api/lists -H Content-Type:application/json -H Origin: https://evil.example -d {"title":"csrf"}
+{"slug":"csrf-32b610","adminToken":"iqIczgvhDy9aBX29K4TRhngcONMfS0NP","title":"csrf","description":""}
+<<< HTTP 201
+== malformed
+>>> POST http://127.0.0.1:4100/api/lists -H Content-Type: text/plain -d x
+{"error":"Type de contenu non supporté."}
+<<< HTTP 415
+>>> POST http://127.0.0.1:4100/api/lists -H Content-Type:application/json -d {bad
+{"error":"JSON invalide."}
+<<< HTTP 400
+>>> GET http://127.0.0.1:4100// -o /dev/null
+
+<<< HTTP 500
+== token in DB plain?
+[
+  [Object: null prototype] {
+    id: 1,
+    slug: 'projet-script-alert-1-script-84be65',
+    admin_token: 'J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5'
+  },
+  [Object: null prototype] {
+    id: 2,
+    slug: 'csrf-32b610',
+    admin_token: 'iqIczgvhDy9aBX29K4TRhngcONMfS0NP'
+  }
+]
+(node:15244) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[stopped pid=12809]
+total 501
+drwxr-xr-x 1 <user> 197609      0 nov.  25 17:07 .
+drwxr-xr-x 1 <user> 197609      0 nov.  25 17:07 ..
+-rw-r--r-- 1 <user> 197609     78 nov.  25 17:07 ids.txt
+-rw-r--r-- 1 <user> 197609   4096 nov.  25 17:07 waitlist.db
+-rw-r--r-- 1 <user> 197609  32768 nov.  25 17:07 waitlist.db-shm
+-rw-r--r-- 1 <user> 197609 473832 nov.  25 17:07 waitlist.db-wal

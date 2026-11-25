@@ -1,0 +1,1 @@
+Ajoute un plan payant avec Stripe : gratuit jusqu'à 100 inscrits, 9 € par mois en illimité.

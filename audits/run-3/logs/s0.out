@@ -1,0 +1,289 @@
+PID=13042
+=== headers /
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+Date: Wed, 25 Nov 2026 16:08:05 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+=== create list
+{"slug":"mon-projet-script-alert-1-script-9a6aab","token":"TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9"}
+SLUG=mon-projet-script-alert-1-script-9a6aab TOKEN=TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9
+>>> POST /api/lists body={"title":""} 
+{"error":"Le titre est obligatoire."}
+<<< HTTP 400
+=== public page (XSS check)
+6:  <title>Mon Projet &lt;script&gt;alert(1)&lt;/script&gt; — Liste d'attente</title>
+7:  <meta name="description" content="Desc &quot;&gt;&lt;img src=x onerror=alert(1)&gt;
+9:  <meta property="og:title" content="Mon Projet &lt;script&gt;alert(1)&lt;/script&gt;">
+10:  <meta property="og:description" content="Desc &quot;&gt;&lt;img src=x onerror=alert(1)&gt;
+23:          <p class="desc">Desc &quot;&gt;&lt;img src=x onerror=alert(1)&gt;<br>ligne2</p>
+=== subscribe
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body={"email":"a@example.com"} 
+{"ok":true,"already":false,"position":1}
+<<< HTTP 201
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body={"email":"A@Example.com "} 
+{"ok":true,"already":true,"position":1}
+<<< HTTP 200
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body={"email":"not-an-email"} 
+{"error":"Adresse email invalide."}
+<<< HTTP 400
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body={"email":"b@example.com","website":"http://bot"} 
+{"ok":true,"position":null}
+<<< HTTP 200
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body={"email":"=cmd|calc@evil.co"} 
+{"ok":true,"already":false,"position":2}
+<<< HTTP 201
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body={"email":"<img/src=x/onerror=alert(1)>@x.co"} 
+{"ok":true,"already":false,"position":3}
+<<< HTTP 201
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body={"email":"c@example.com"} 
+{"ok":true,"already":false,"position":4}
+<<< HTTP 201
+>>> POST /api/w/nope-000000/subscribe body={"email":"c@example.com"} 
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> POST /api/w/mon-projet-script-alert-1-script-9a6aab/subscribe body=not json 
+{"error":"JSON invalide"}
+<<< HTTP 400
+=== dashboard
+>>> GET /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9  GET /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9
+{"list":{"slug":"mon-projet-script-alert-1-script-9a6aab","title":"Mon Projet <script>alert(1)</script>","description":"Desc \"><img src=x onerror=alert(1)>\nligne2","created_at":"2026-11-25T16:08:05.687Z"},"total":4,"subscribers":[{"id":4,"email":"c@example.com","created_at":"2026-11-25T16:08:07.128Z"},{"id":3,"email":"<img/src=x/onerror=alert(1)>@x.co","created_at":"2026-11-25T16:08:07.035Z"},{"id":2,"email":"=cmd|calc@evil.co","created_at":"2026-11-25T16:08:06.942Z"},{"id":1,"email":"a@example.com","created_at":"2026-11-25T16:08:06.568Z"}]}
+<<< HTTP 200
+
+<<< HTTP 000
+
+<<< HTTP 000
+>>> GET /api/d/wrongtoken  GET /api/d/wrongtoken
+{"error":"Dashboard introuvable."}
+<<< HTTP 404
+
+<<< HTTP 000
+
+<<< HTTP 000
+>>> GET /api/d/  GET /api/d/
+{"error":"Route inconnue."}
+<<< HTTP 404
+
+<<< HTTP 000
+
+<<< HTTP 000
+=== dashboard page headers
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+Cache-Control: no-store
+X-Robots-Tag: noindex
+Date: Wed, 25 Nov 2026 16:08:15 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+=== edit
+>>> PATCH /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9 body={"title":"Titre modifie","description":"nouvelle desc"} 
+{"list":{"slug":"mon-projet-script-alert-1-script-9a6aab","title":"Titre modifie","description":"nouvelle desc","created_at":"2026-11-25T16:08:05.687Z"},"total":4,"subscribers":[{"id":4,"email":"c@example.com","created_at":"2026-11-25T16:08:07.128Z"},{"id":3,"email":"<img/src=x/onerror=alert(1)>@x.co","created_at":"2026-11-25T16:08:07.035Z"},{"id":2,"email":"=cmd|calc@evil.co","created_at":"2026-11-25T16:08:06.942Z"},{"id":1,"email":"a@example.com","created_at":"2026-11-25T16:08:06.568Z"}]}
+<<< HTTP 200
+>>> PATCH /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9 body={"title":"  "} 
+{"error":"Le titre est obligatoire."}
+<<< HTTP 400
+=== delete subscriber id 1
+>>> DELETE /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9/subscribers/1  DELETE /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9/subscribers/1
+{"list":{"slug":"mon-projet-script-alert-1-script-9a6aab","title":"Titre modifie","description":"nouvelle desc","created_at":"2026-11-25T16:08:05.687Z"},"total":3,"subscribers":[{"id":4,"email":"c@example.com","created_at":"2026-11-25T16:08:07.128Z"},{"id":3,"email":"<img/src=x/onerror=alert(1)>@x.co","created_at":"2026-11-25T16:08:07.035Z"},{"id":2,"email":"=cmd|calc@evil.co","created_at":"2026-11-25T16:08:06.942Z"}]}
+<<< HTTP 200
+
+<<< HTTP 000
+
+<<< HTTP 000
+>>> DELETE /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9/subscribers/abc  DELETE /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9/subscribers/abc
+{"list":{"slug":"mon-projet-script-alert-1-script-9a6aab","title":"Titre modifie","description":"nouvelle desc","created_at":"2026-11-25T16:08:05.687Z"},"total":3,"subscribers":[{"id":4,"email":"c@example.com","created_at":"2026-11-25T16:08:07.128Z"},{"id":3,"email":"<img/src=x/onerror=alert(1)>@x.co","created_at":"2026-11-25T16:08:07.035Z"},{"id":2,"email":"=cmd|calc@evil.co","created_at":"2026-11-25T16:08:06.942Z"}]}
+<<< HTTP 200
+
+<<< HTTP 000
+
+<<< HTTP 000
+=== export
+HTTP/1.1 200 OK
+Content-Type: text/csv; charset=utf-8
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+Content-Disposition: attachment; filename="mon-projet-script-alert-1-script-9a6aab-inscrits.csv"
+Cache-Control: no-store
+Date: Wed, 25 Nov 2026 16:08:21 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+﻿"#","email","inscrit_le"
+"1","'=cmd|calc@evil.co","2026-11-25T16:08:06.942Z"
+"2","<img/src=x/onerror=alert(1)>@x.co","2026-11-25T16:08:07.035Z"
+"3","c@example.com","2026-11-25T16:08:07.128Z"
+=== delete list (route exists?)
+>>> DELETE /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9  DELETE /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9
+{"error":"Route inconnue."}
+<<< HTTP 404
+
+<<< HTTP 000
+
+<<< HTTP 000
+=== replaceAll pattern bug
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>X <!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title> Y {{title}}amp; Z — Liste d'attente</title>
+  <meta name="description" content="D <!doctype html>
+=== path traversal static
+>>> GET /static/..%2fserver.js  GET /static/..%2fserver.js
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page introuvable</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="glow"></div>
+  <main class="center-page">
+    <div>
+      <h1 class="gradient-text">404</h1>
+      <p>Cette page n'existe pas, ou plus.</p>
+      <a class="btn btn-primary" href="/">Créer une liste d'attente</a>
+    </div>
+  </main>
+</body>
+</html>
+
+<<< HTTP 404
+
+<<< HTTP 000
+
+<<< HTTP 000
+>>> GET /static/../server.js  --path-as-is
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page introuvable</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="glow"></div>
+  <main class="center-page">
+    <div>
+      <h1 class="gradient-text">404</h1>
+      <p>Cette page n'existe pas, ou plus.</p>
+      <a class="btn btn-primary" href="/">Créer une liste d'attente</a>
+    </div>
+  </main>
+</body>
+</html>
+
+<<< HTTP 404
+>>> GET /server.js  GET /server.js
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page introuvable</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="glow"></div>
+  <main class="center-page">
+    <div>
+      <h1 class="gradient-text">404</h1>
+      <p>Cette page n'existe pas, ou plus.</p>
+      <a class="btn btn-primary" href="/">Créer une liste d'attente</a>
+    </div>
+  </main>
+</body>
+</html>
+
+<<< HTTP 404
+
+<<< HTTP 000
+
+<<< HTTP 000
+>>> GET /data/waitlist.db  GET /data/waitlist.db
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page introuvable</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="glow"></div>
+  <main class="center-page">
+    <div>
+      <h1 class="gradient-text">404</h1>
+      <p>Cette page n'existe pas, ou plus.</p>
+      <a class="btn btn-primary" href="/">Créer une liste d'attente</a>
+    </div>
+  </main>
+</body>
+</html>
+
+<<< HTTP 404
+
+<<< HTTP 000
+
+<<< HTTP 000
+=== big body
+
+HTTP 000
+=== rate limit subscribe (20/10min/IP)
+201 201 201 201 201 201 201 201 201 201 201 201 429 429 429 429 429 429 429 429 429 429 
+=== rate limit create (10/h/IP)
+201 201 201 201 201 201 429 429 429 429 429 429 
+=== CORS preflight / cross origin POST
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json; charset=utf-8
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+Cache-Control: no-store
+Date: Wed, 25 Nov 2026 16:08:37 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+>>> GET /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9  GET /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9
+{"list":{"slug":"mon-projet-script-alert-1-script-9a6aab","title":"Titre modifie","description":"nouvelle desc","created_at":"2026-11-25T16:08:05.687Z"},"total":15,"subscribers":[{"id":16,"email":"rl12@example.com","created_at":"2026-11-25T16:08:35.347Z"},{"id":15,"email":"rl11@example.com","created_at":"2026-11-25T16:08:35.259Z"},{"id":14,"email":"rl10@example.com","created_at":"2026-11-25T16:08:35.176Z"},{"id":13,"email":"rl9@example.com","created_at":"2026-11-25T16:08:35.091Z"},{"id":12,"email":"rl8@example.com","created_at":"2026-11-25T16:08:35.011Z"},{"id":11,"email":"rl7@example.com","created_at":"2026-11-25T16:08:34.861Z"},{"id":10,"email":"rl6@example.com","created_at":"2026-11-25T16:08:34.782Z"},{"id":9,"email":"rl5@example.com","created_at":"2026-11-25T16:08:34.699Z"},{"id":8,"email":"rl4@example.com","created_at":"2026-11-25T16:08:34.616Z"},{"id":7,"email":"rl3@example.com","created_at":"2026-11-25T16:08:34.536Z"},{"id":6,"email":"rl2@example.com","created_at":"2026-11-25T16:08:34.451Z"},{"id":5,"email":"rl1@example.com","created_at":"2026-11-25T16:08:34.366Z"},{"id":4,"email":"c@example.com","created_at":"2026-11-25T16:08:07.128Z"},{"id":3,"email":"<img/src=x/onerror=alert(1)>@x.co","created_at":"2026-11-25T16:08:07.035Z"},{"id":2,"email":"=cmd|calc@evil.co","created_at":"2026-11-25T16:08:06.942Z"}]}
+<<< HTTP 200
+
+<<< HTTP 000
+=== restart: persistence
+>>> GET /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9  GET /api/d/TQ8i5TACTSuPD4KZmtL7e7gLhhddwwh9
+{"list":{"slug":"mon-projet-script-alert-1-script-9a6aab","title":"Titre modifie","description":"nouvelle desc","created_at":"2026-11-25T16:08:05.687Z"},"total":15,"subscribers":[{"id":16,"email":"rl12@example.com","created_at":"2026-11-25T16:08:35.347Z"},{"id":15,"email":"rl11@example.com","created_at":"2026-11-25T16:08:35.259Z"},{"id":14,"email":"rl10@example.com","created_at":"2026-11-25T16:08:35.176Z"},{"id":13,"email":"rl9@example.com","created_at":"2026-11-25T16:08:35.091Z"},{"id":12,"email":"rl8
+total 420
+drwxr-xr-x 1 <user> 197609      0 nov.  25 17:08 .
+drwxr-xr-x 1 <user> 197609      0 nov.  25 17:08 ..
+-rw-r--r-- 1 <user> 197609   4096 nov.  25 17:08 waitlist.db
+-rw-r--r-- 1 <user> 197609  32768 nov.  25 17:08 waitlist.db-shm
+-rw-r--r-- 1 <user> 197609 350232 nov.  25 17:08 waitlist.db-wal

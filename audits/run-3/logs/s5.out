@@ -1,0 +1,61 @@
+PID=18402 FAKE_PID=18400
+##### Host header -> Stripe success_url (step 4, APP_URL unset)
+{"url":"https://checkout.stripe.com/c/pay/cs_test_fake_1"} HTTP 200
+success_url=http://evil.example/app/billing?checkout=success
+##### Host header -> CSV referral links
+"1","u1@example.com","0","","2026-11-25T16:15:16.998Z","http://evil.example/w/referral-b-test-b-0b3b15?ref=enKuHTBC"
+##### SQLi probes
+>>> POST /api/w/referral-b-test-b-0b3b15/subscribe body={"email":"a'--@x.co"} 
+{"ok":true,"already":false,"position":15,"total":15,"referrals":0,"ref_code":"XSudiUrM","boost":5}
+<<< HTTP 201
+>>> GET /api/w/referral-b-test-b-0b3b15/status?code=%27%20OR%201%3D1--  
+{"error":"Inscription introuvable."}
+<<< HTTP 404
+>>> GET /api/lists/%27%20OR%20%271%27%3D%271  -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> POST /api/auth/login body={"email":"' OR 1=1--@x.co","password":"x"} 
+{"error":"Email ou mot de passe incorrect."}
+<<< HTTP 401
+##### signup rate limit (10/h/IP) + password length
+{"error":"Mot de passe trop long."}
+<<< HTTP 400
+201 201 201 201 201 201 201 201 201 429 429 429 
+##### unauth reachability map (step 4)
+200  /
+200  /login
+200  /signup
+302  /app
+302  /app/billing
+302  /app/lists/liste-b-secrete-d6491c
+200  /w/liste-b-secrete-d6491c
+200  /static/styles.css
+200  /static/dashboard.js
+401  /api/me
+401  /api/lists
+401  /api/lists/liste-b-secrete-d6491c
+401  /api/lists/liste-b-secrete-d6491c/export.csv
+404  /api/w/liste-b-secrete-d6491c/status?code=x
+302  /d/abc
+404  /data/waitlist.db
+404  /server.js
+404  /README.md
+404  /package.json
+404  /.gitignore
+401  POST /api/billing/checkout
+401  POST /api/billing/sync
+401  POST /api/billing/portal
+401  POST /api/lists
+401  POST /api/lists/claim
+200  POST /api/auth/logout
+##### step 2: open redirect + malformed cookie (same code path as step 1)
+PID=18470
+logged-in: Location: /^I/evil.example$
+malformed cookie: HTTP 500
+##### tests
+npm error Missing script: "test"
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: C:\Users\<user>\AppData\Local\npm-cache\_logs\2026-11-25T16_17_06_120Z-debug-0.log
+(listeners on 4300-4349 listed above; none expected)

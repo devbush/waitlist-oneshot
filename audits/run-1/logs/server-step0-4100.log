@@ -1,0 +1,13 @@
+✓ Waitlist prête sur http://localhost:4100
+✓ Waitlist prête sur http://localhost:4100
+TypeError: Invalid URL
+    at new URL (node:internal/url:819:25)
+    at handle (file:///<racine>/_harness/audit/run-1/step-0/server.js:332:15)
+    at Server.<anonymous> (file:///<racine>/_harness/audit/run-1/step-0/server.js:435:11)
+    at Server.emit (node:events:508:28)
+    at parserOnIncoming (node:_http_server:1210:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17) {
+  code: 'ERR_INVALID_URL',
+  input: '//',
+  base: 'http://localhost'
+}

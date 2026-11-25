@@ -1,0 +1,10 @@
+Waitlist prêt sur http://localhost:4302
+Paiements Stripe désactivés (STRIPE_SECRET_KEY / STRIPE_PRICE_ID absents) : tous les comptes sont illimités.
+URIError: URI malformed
+    at decodeURIComponent (<anonymous>)
+    at parseCookies (file:///<racine>/_harness/audit/run-3/step-2/server.js:228:47)
+    at currentUser (file:///<racine>/_harness/audit/run-3/step-2/server.js:244:17)
+    at Server.<anonymous> (file:///<racine>/_harness/audit/run-3/step-2/server.js:664:18)
+    at Server.emit (node:events:508:28)
+    at parserOnIncoming (node:_http_server:1210:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)

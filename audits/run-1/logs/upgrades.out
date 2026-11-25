@@ -1,0 +1,97 @@
+################ step-1 data -> step-2
+  lists ERR no such column: "lists" - should this be a string literal in single-quotes?
+  subscribers ERR no such column: "subscribers" - should this be a string literal in single-quotes?
+  users ERR no such column: "users" - should this be a string literal in single-quotes?
+[started step-2 on :4102 pid=17741]
+  lists ERR no such column: "lists" - should this be a string literal in single-quotes?
+  subscribers ERR no such column: "subscribers" - should this be a string literal in single-quotes?
+  users ERR no such column: "users" - should this be a string literal in single-quotes?
+-- B's old session cookie still valid, lists + subscribers intact:
+{"user":{"email":"b@example.com"},"plan":{"plan":"free","limit":100,"used":3,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false},"lists":[{"slug":"form-no-origin-63e78b","title":"form-no-origin","createdAt":1795622895839,"total":0,"week":0},{"slug":"liste-b-img-src-x-onerror-alert-1-874324","title":"Liste B <img src=x onerror=alert(1)>","createdAt":179562288
+
+{"user":{"email":"b@example.com"},"list":{"title":"Liste B <img src=x onerror=alert(1)>","description":"edited","slug":"liste-b-img-src-x-onerror-alert-1-874324","createdAt":1795622889864},"total":3,"hidden":0,"timestamps":[1795622890331,1795622890249,1795622890160],"subscribers":[{"id":3,"email":"b3@example.com","createdAt":179
+
+-- old password still logs in (hash format unchanged):
+>>> POST http://127.0.0.1:4102/api/auth/login -H Content-Type:application/json -d {"email":"b@example.com","password":"password-B-123"}
+{"user":{"email":"b@example.com"}}
+<<< HTTP 200
+-- public signup + export on old list:
+>>> POST http://127.0.0.1:4102/api/w/liste-b-img-src-x-onerror-alert-1-874324/subscribe -H Content-Type:application/json -d {"email":"post-upgrade@example.com"}
+{"ok":true,"position":4,"already":false,"total":4}
+<<< HTTP 200
+3,b3@example.com,2026-11-25T16:08:10.331Z
+4,post-upgrade@example.com,2026-11-25T16:15:53.125Z
+-- A (other account) still locked out of B's list:
+>>> POST http://127.0.0.1:4102/api/auth/login -H Content-Type:application/json -c <racine>/_harness/audit/run-1/data/up1to2/a2.jar -H X-Forwarded-For: 1.1.1.1 -d {"email":"c2@example.com","password":"12345678"}
+{"user":{"email":"c2@example.com"}}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-874324 -b <racine>/_harness/audit/run-1/data/up1to2/a2.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+[stopped pid=17741]
+################ step-2 data (free account with 130 subs, 30 hidden) -> step-4
+  lists ERR no such column: "lists" - should this be a string literal in single-quotes?
+  subscribers ERR no such column: "subscribers" - should this be a string literal in single-quotes?
+  users ERR no such column: "users" - should this be a string literal in single-quotes?
+[started step-4 on :4104 pid=17779]
+  lists ERR no such column: "lists" - should this be a string literal in single-quotes?
+  subscribers ERR no such column: "subscribers" - should this be a string literal in single-quotes?
+  users ERR no such column: "users" - should this be a string literal in single-quotes?
+  subs without ref_code: 0
+{"user":{"email":"a@example.com"},"plan":{"plan":"free","limit":100,"used":150,"hidden":50,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false},"lists":[{"slug":"l2-4a6958","title":"L2","createdAt":1795623092374,"total":150,"week":150}]}
+
+{"total":150,"hidden":50,"visible":100,"sample":[{"id":102,"email":"u102@example.com","createdAt":1795623108234,"position":2,"referrals":0,"refCode":"eyetbb4r","referredBy":null},{"id":101,"email":"u101@example.com","createdAt":1795623108141,"position":1,"referrals":0,"refCode":"7837h8vf","referredBy":null}]}
+-- old subscriber gets a working referral link after upgrade:
+>>> GET http://127.0.0.1:4104/api/w/l2-4a6958/status/7837h8vf 
+{"position":1,"referrals":0,"refCode":"7837h8vf","total":150,"boost":5}
+<<< HTTP 200
+>>> POST http://127.0.0.1:4104/api/w/l2-4a6958/subscribe -H Content-Type:application/json -d {"email":"new-after-upgrade@example.com","ref":"7837h8vf"}
+{"ok":true,"already":false,"position":151,"referrals":0,"refCode":"9ewrfxzx","total":151,"boost":5}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4104/api/w/l2-4a6958/status/7837h8vf 
+{"position":1,"referrals":1,"refCode":"7837h8vf","total":151,"boost":5}
+<<< HTTP 200
+-- owner deletes the referee -> referrer loses the boost (referee is hidden on free plan -> cannot delete?)
+﻿position,email,date_inscription,parrainages,parraine_par,lien_parrainage
+1,u101@example.com,2026-11-25T16:11:48.141Z,1,,http://127.0.0.1:4104/w/l2-4a6958?ref=7837h8vf
+2,u102@example.com,2026-11-25T16:11:48.234Z,0,,http://127.0.0.1:4104/w/l2-4a6958?ref=eyetbb4r
+[stopped pid=17779]
+################ chain: step-0 data -> step-1 (done) -> step-2 -> step-4, and step-0 -> step-4 direct
+[started step-2 on :4102 pid=17816]
+[stopped pid=17816]
+[started step-4 on :4104 pid=17829]
+  lists ERR no such column: "lists" - should this be a string literal in single-quotes?
+  subscribers ERR no such column: "subscribers" - should this be a string literal in single-quotes?
+  users ERR no such column: "users" - should this be a string literal in single-quotes?
+  subs without ref_code: 0
+public page of step-0 list: 200
+>>> POST http://127.0.0.1:4104/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"chain@example.com"}
+{"ok":true,"already":false,"position":24,"referrals":0,"refCode":"dk9kk4yq","total":24,"boost":5}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4104/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 -o /dev/null
+
+<<< HTTP 404
+>>> GET http://127.0.0.1:4104/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> POST http://127.0.0.1:4104/api/auth/login -H Content-Type:application/json -c <racine>/_harness/audit/run-1/data/up-chain/o2.jar -d {"email":"owner@example.com","password":"password-owner-1"}
+{"user":{"email":"owner@example.com"}}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4104/api/lists -b <racine>/_harness/audit/run-1/data/up-chain/o2.jar
+{"user":{"email":"owner@example.com"},"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false},"lists":[]}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4104/api/lists/projet-script-alert-1-script-84be65 -b <racine>/_harness/audit/run-1/data/up-chain/o2.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+[stopped pid=17829]
+[started step-4 on :4104 pid=17880]
+  lists ERR no such column: "lists" - should this be a string literal in single-quotes?
+  subscribers ERR no such column: "subscribers" - should this be a string literal in single-quotes?
+  users ERR no such column: "users" - should this be a string literal in single-quotes?
+  subs without ref_code: 0
+direct 0->4 public page: 200
+>>> GET http://127.0.0.1:4104/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 
+{"error":"Introuvable."}
+<<< HTTP 404
+orphan lists: [{"id":1,"user_id":null,"slug":"projet-script-alert-1-script-84be65","subs":22},{"id":2,"user_id":null,"slug":"csrf-32b610","subs":0}]
+[stopped pid=17880]

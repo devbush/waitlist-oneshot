@@ -1,0 +1,42 @@
+[started step-2 on :4102 pid=14672]
+== 130 signups, 60 on L1 then 70 on L2 (one spoofed X-Forwarded-For each: bypasses 20/min IP limit because TRUST_PROXY=1)
+      1 
+     60 200
+      1 
+     70 200
+== signups are never refused: the limit is on what the owner can SEE
+L1: {"total":60,"hidden":0,"visible":60,"first":"u1","last":"u60","timestamps":60,"plan":{"plan":"free","used":130,"hidden":30}}
+L2: {"total":70,"hidden":30,"visible":40,"first":"u61","last":"u100","timestamps":70,"plan":{"plan":"free","used":130,"hidden":30}}
+CSV rows L1=60 L2=40
+{"user":{"email":"a@example.com"},"plan":{"plan":"free","limit":100,"used":130,"hidden":30,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false},"lists":[{"slug":"l2-4a6958","title":"L2","createdAt":1795623092374,"total":70,"week":70},{"slug":"l1-e1eb3a","title":"L1","createdAt":1795623090369,"total":60,"week":60}]}
+
+== direct API: raw JSON of L2 contains any hidden email (u101..u130)?
+u100@example.com
+hidden emails found in JSON: 0
+keys: user,list,total,hidden,timestamps,subscribers,plan
+== hidden subscriber: delete by guessed id (id 120)
+>>> DELETE http://127.0.0.1:4102/api/lists/l2-4a6958/subscribers/120 -b <racine>/_harness/audit/run-1/data/s2-limit/a.jar -c <racine>/_harness/audit/run-1/data/s2-limit/a.jar
+{"error":"Inscrit introuvable."}
+<<< HTTP 404
+== BYPASS 1: export, delete the visible ones, export again (rolling window)
+deleted 40 visible subscribers of L2
+L2 after delete: {"total":30,"hidden":0,"visible":30,"first":"u101","last":"u130","timestamps":30,"plan":{"plan":"free","used":90,"hidden":0}}
+distinct L2 emails harvested on the free plan: 70 of 70 (u61..u130)
+u130 harvested? 1
+== BYPASS 2: delete a whole list frees quota (new signups to L2 after dropping L1)
+L2 before dropping L1: {"total":90,"hidden":50,"visible":40,"first":"u101","last":"u140","timestamps":90,"plan":{"plan":"free","used":150,"hidden":50}}
+>>> DELETE http://127.0.0.1:4102/api/lists/l1-e1eb3a -b <racine>/_harness/audit/run-1/data/s2-limit/a.jar -c <racine>/_harness/audit/run-1/data/s2-limit/a.jar
+{"ok":true}
+<<< HTTP 200
+L2 after dropping L1:  {"total":90,"hidden":0,"visible":90,"first":"u101","last":"u190","timestamps":90,"plan":{"plan":"free","used":90,"hidden":0}}
+== BYPASS 3: second free account = another 100
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false}}
+== concurrent signups (40 in parallel) on L2
+L2: {"total":130,"hidden":30,"visible":100,"first":"u101","last":"par10","timestamps":130,"plan":{"plan":"free","used":130,"hidden":30}}
+== same IP without spoofing: rate limit holds at 20/min
+200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 429 429 429 
+== login brute force with rotating X-Forwarded-For (TRUST_PROXY=1): 15 wrong guesses
+401 401 401 401 401 401 401 401 401 401 401 401 401 401 401 
+== cookie Secure flag with X-Forwarded-Proto: https (TRUST_PROXY=1)
+Set-Cookie: wl_session=m7uRYK7o4Ugg-5KCyWA-NXieZVpYocIEWrwEB5Telok; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000; Secure
+[stopped pid=14672]

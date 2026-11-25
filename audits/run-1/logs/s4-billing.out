@@ -1,0 +1,142 @@
+######## PART 1: no Stripe configuration
+[started step-4 on :4104 pid=16429]
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false}}
+
+>>> POST http://127.0.0.1:4104/api/billing/checkout -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar
+{"error":"Les paiements ne sont pas encore configurés sur ce serveur."}
+<<< HTTP 503
+>>> POST http://127.0.0.1:4104/api/billing/portal -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar
+{"error":"Les paiements ne sont pas encore configurés sur ce serveur."}
+<<< HTTP 503
+>>> POST http://127.0.0.1:4104/stripe/webhook -H Content-Type:application/json -d {"type":"checkout.session.completed"}
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Introuvable</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/styles.css"></head>
+<body class="page-public"><div class="mesh" aria-hidden="true"><span></span><span></span><span></span></div>
+<main class="wl"><div class="wl-card center"><span class="pill">Erreur 404</span><h1 class="wl-title">Cette page n’existe pas</h1>
+<div class="wl-desc"><p>Le lien est peut-être incorrect, ou la liste a été supprimée.</p></div>
+<a class="btn btn-primary" href="/">Retour à l’accueil</a></div></main></body></html>
+<<< HTTP 404
+>>> POST http://127.0.0.1:4104/stripe/webhook -H Content-Type:application/json -H Stripe-Signature: t=1,v1=00 -d {}
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Introuvable</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/styles.css"></head>
+<body class="page-public"><div class="mesh" aria-hidden="true"><span></span><span></span><span></span></div>
+<main class="wl"><div class="wl-card center"><span class="pill">Erreur 404</span><h1 class="wl-title">Cette page n’existe pas</h1>
+<div class="wl-desc"><p>Le lien est peut-être incorrect, ou la liste a été supprimée.</p></div>
+<a class="btn btn-primary" href="/">Retour à l’accueil</a></div></main></body></html>
+<<< HTTP 404
+[stopped pid=16429]
+######## PART 2: fake Stripe config, API base -> local fake on :4110
+[started step-4 on :4104 pid=16466]
+== unauth billing routes
+>>> GET http://127.0.0.1:4104/api/billing 
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+>>> POST http://127.0.0.1:4104/api/billing/checkout 
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+>>> POST http://127.0.0.1:4104/api/billing/portal 
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+== plan A (free)
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":true}}
+
+== checkout A
+>>> POST http://127.0.0.1:4104/api/billing/checkout -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar
+{"url":"https://checkout.stripe.com/c/pay/cs_test_fake"}
+<<< HTTP 200
+-- what the app sent to (fake) Stripe:
+POST /v1/customers auth=Bearer sk_test_fake idem=customer-1-1795623217560 body=email=a@example.com&metadata[user_id]=1
+POST /v1/checkout/sessions auth=Bearer sk_test_fake idem= body=mode=subscription&customer=cus_fake_1&client_reference_id=1&line_items[0][price]=price_fake_9eur&line_items[0][quantity]=1&subscription_data[metadata][user_id]=1&allow_promotion_codes=true&locale=fr&success_url=http://127.0.0.1:4104/app?billing=success&cancel_url=http://127.0.0.1:4104/app?billing=cancel
+== portal before any subscription? (A has customer now)
+>>> POST http://127.0.0.1:4104/api/billing/portal -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar
+{"url":"https://billing.stripe.com/p/session/fake"}
+<<< HTTP 200
+>>> POST http://127.0.0.1:4104/api/billing/portal -b <racine>/_harness/audit/run-1/data/s4-billing/b.jar -c <racine>/_harness/audit/run-1/data/s4-billing/b.jar
+{"error":"Aucun abonnement à gérer."}
+<<< HTTP 400
+== free-upgrade attempts without paying
+GET /app?billing=success -> 200
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":true,"billingEnabled":true}}
+
+>>> GET http://127.0.0.1:4104/api/billing?plan=pro -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar -o /dev/null
+
+<<< HTTP 200
+>>> POST http://127.0.0.1:4104/api/billing -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar -d {"plan":"pro"}
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> PATCH http://127.0.0.1:4104/api/billing -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar -d {"plan":"pro","subscription_status":"active"}
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> PUT http://127.0.0.1:4104/api/auth/me -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar -d {"subscription_status":"active"}
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> POST http://127.0.0.1:4104/api/auth/signup -H Content-Type:application/json -d {"email":"mass@example.com","password":"password-123","subscription_status":"active","plan":"pro","stripe_customer_id":"cus_fake_1"}
+{"user":{"email":"mass@example.com"}}
+<<< HTTP 201
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":true}}
+
+== webhook forgery
+{"error":"Signature invalide."} <<< HTTP 400 (no signature)
+{"error":"Signature invalide."} <<< HTTP 400 (garbage sig)
+wrong secret: {"error":"Signature invalide."} <<< HTTP 400
+empty secret: Le service de paiement a refusé la demande. Réessayez dans un instant. <<< HTTP 502
+right secret, t 10 min old: {"error":"Signature invalide."} <<< HTTP 400
+right secret, t 10 min future: {"error":"Signature invalide."} <<< HTTP 400
+v1 missing (v0 only): {"error":"Signature invalide."} <<< HTTP 400
+valid sig but tampered body: {"error":"Signature invalide."} <<< HTTP 400
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":true,"billingEnabled":true}}
+
+== valid signed event but Stripe says the subscription is NOT paid (incomplete)
+signed: {"received":true} <<< HTTP 200
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":"incomplete","periodEnd":1900000000000,"cancelAtPeriodEnd":false,"hasCustomer":true,"billingEnabled":true}}
+
+== valid signed event, subscription active at Stripe -> Pro
+signed: {"received":true} <<< HTTP 200
+{"plan":{"plan":"pro","limit":null,"used":0,"hidden":0,"status":"active","periodEnd":1900000000000,"cancelAtPeriodEnd":false,"hasCustomer":true,"billingEnabled":true}}
+
+-- B unaffected?
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":true}}
+
+== checkout again while Pro
+>>> POST http://127.0.0.1:4104/api/billing/checkout -b <racine>/_harness/audit/run-1/data/s4-billing/a.jar -c <racine>/_harness/audit/run-1/data/s4-billing/a.jar
+{"error":"Vous êtes déjà sur le plan Pro."}
+<<< HTTP 409
+== signed event whose client_reference_id points at B but the sub belongs to A's customer
+signed: {"received":true} <<< HTTP 200
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":true}}
+
+== cancel: Stripe says canceled -> back to free
+signed deleted: {"received":true} <<< HTTP 200
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":"canceled","periodEnd":1900000000000,"cancelAtPeriodEnd":false,"hasCustomer":true,"billingEnabled":true}}
+
+== past_due counts as Pro?
+signed updated: {"received":true} <<< HTTP 200
+{"plan":{"plan":"pro","limit":null,"used":0,"hidden":0,"status":"past_due","periodEnd":1900000000000,"cancelAtPeriodEnd":false,"hasCustomer":true,"billingEnabled":true}}
+
+{"plan":{"plan":"free","limit":100,"used":0,"hidden":0,"status":"canceled","periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":true,"billingEnabled":true}}
+
+== Stripe down during webhook (unknown sub -> fake returns 404)
+signed: Le service de paiement a refusé la demande. Réessayez dans un instant. <<< HTTP 502
+== users table (billing columns)
+[{"id":1,"email":"a@example.com","stripe_customer_id":"cus_fake_1","stripe_subscription_id":"sub_A","subscription_status":"canceled","current_period_end":null,"cancel_at_period_end":0},{"id":2,"email":"b@example.com","stripe_customer_id":null,"stripe_subscription_id":null,"subscription_status":null,"current_period_end":null,"cancel_at_period_end":0},{"id":3,"email":"mass@example.com","stripe_customer_id":null,"stripe_subscription_id":null,"subscription_status":null,"current_period_end":null,"cancel_at_period_end":0}]
+[stopped pid=16459]
+[stopped pid=16466]
+== fake stripe request log
+POST /v1/customers auth=Bearer sk_test_fake idem=customer-1-1795623217560 body=email=a@example.com&metadata[user_id]=1
+POST /v1/checkout/sessions auth=Bearer sk_test_fake idem= body=mode=subscription&customer=cus_fake_1&client_reference_id=1&line_items[0][price]=price_fake_9eur&line_items[0][quantity]=1&subscription_data[metadata][user_id]=1&allow_promotion_codes=true&locale=fr&success_url=http://127.0.0.1:4104/app?billing=success&cancel_url=http://127.0.0.1:4104/app?billing=cancel
+POST /v1/billing_portal/sessions auth=Bearer sk_test_fake idem= body=customer=cus_fake_1&return_url=http://127.0.0.1:4104/app
+GET /v1/subscriptions/sub_A auth=Bearer sk_test_fake idem= body=
+POST /__set auth= idem= body={"id":"sub_A","customer":"cus_fake_1","status":"incomplete","current_period_end":1900000000}
+GET /v1/subscriptions/sub_A auth=Bearer sk_test_fake idem= body=
+POST /__set auth= idem= body={"id":"sub_A","customer":"cus_fake_1","status":"active","current_period_end":1900000000}
+GET /v1/subscriptions/sub_A auth=Bearer sk_test_fake idem= body=
+GET /v1/subscriptions/sub_A auth=Bearer sk_test_fake idem= body=
+POST /__set auth= idem= body={"id":"sub_A","customer":"cus_fake_1","status":"canceled","current_period_end":1900000000}
+GET /v1/subscriptions/sub_A auth=Bearer sk_test_fake idem= body=
+POST /__set auth= idem= body={"id":"sub_A","customer":"cus_fake_1","status":"past_due","current_period_end":1900000000}
+GET /v1/subscriptions/sub_A auth=Bearer sk_test_fake idem= body=
+POST /__set auth= idem= body={"id":"sub_A","customer":"cus_fake_1","status":"canceled"}
+GET /v1/subscriptions/sub_A auth=Bearer sk_test_fake idem= body=
+GET /v1/subscriptions/sub_unknown auth=Bearer sk_test_fake idem= body=

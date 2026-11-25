@@ -1,0 +1,40 @@
+✓ Waitlist prête sur http://localhost:4102
+✓ Waitlist prête sur http://localhost:4102
+Stripe GET subscriptions/sub_A : 404 not found (fake)
+Stripe GET subscriptions/sub_unknown : 404 not found (fake)
+✓ Waitlist prête sur http://localhost:4102
+✓ Waitlist prête sur http://localhost:4102
+TypeError [ERR_INVALID_CHAR]: Invalid character in header content ["Location"]
+    at storeHeader (node:_http_outgoing:570:5)
+    at processHeader (node:_http_outgoing:565:3)
+    at ServerResponse._storeHeader (node:_http_outgoing:434:11)
+    at ServerResponse.writeHead (node:_http_server:441:8)
+    at send (file:///<racine>/_harness/audit/run-1/step-2/server.js:295:7)
+    at redirect (file:///<racine>/_harness/audit/run-1/step-2/server.js:302:37)
+    at handle (file:///<racine>/_harness/audit/run-1/step-2/server.js:764:21)
+    at Server.<anonymous> (file:///<racine>/_harness/audit/run-1/step-2/server.js:928:11)
+    at Server.emit (node:events:508:28)
+    at parserOnIncoming (node:_http_server:1210:12) {
+  code: 'ERR_INVALID_CHAR'
+}
+URIError: URI malformed
+    at decodeURIComponent (<anonymous>)
+    at parseCookies (file:///<racine>/_harness/audit/run-1/step-2/server.js:355:47)
+    at currentUser (file:///<racine>/_harness/audit/run-1/step-2/server.js:375:17)
+    at handle (file:///<racine>/_harness/audit/run-1/step-2/server.js:757:16)
+    at Server.<anonymous> (file:///<racine>/_harness/audit/run-1/step-2/server.js:928:11)
+    at Server.emit (node:events:508:28)
+    at parserOnIncoming (node:_http_server:1210:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)
+URIError: URI malformed
+    at decodeURIComponent (<anonymous>)
+    at parseCookies (file:///<racine>/_harness/audit/run-1/step-2/server.js:355:47)
+    at currentUser (file:///<racine>/_harness/audit/run-1/step-2/server.js:375:17)
+    at handle (file:///<racine>/_harness/audit/run-1/step-2/server.js:757:16)
+    at Server.<anonymous> (file:///<racine>/_harness/audit/run-1/step-2/server.js:928:11)
+    at Server.emit (node:events:508:28)
+    at parserOnIncoming (node:_http_server:1210:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)
+✓ Waitlist prête sur http://localhost:4102
+✓ Waitlist prête sur http://localhost:4102
+✓ Waitlist prête sur http://localhost:4102

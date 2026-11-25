@@ -1,0 +1,46 @@
+step-0 list: slug=projet-script-alert-1-script-84be65 token=J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5
+== DB before upgrade
+lists [{"id":1,"slug":"projet-script-alert-1-script-84be65","title":"Nouveau titre","description":"Desc <img src=x onerror=alert(1)>\n\nP2","admin_token":"J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5","created_at":1795622837282},{"id":2,"slug":"csrf-32b610","title":"csrf","description":"","admin_token":"iqIczgvhDy9aBX29K4TRhngcONMfS0NP","created_at":1795622846667}]
+subscribers [{"id":3,"list_id":1,"email":"=cmd|calc@evil.co","created_at":1795622838690},{"id":4,"list_id":1,"email":"bob@example.com","created_at":1795622839163},{"id":5,"list_id":1,"email":"rl1@example.com","created_at":1795622843795},{"id":6,"list_id":1,"email":"rl2@example.com","created_at":1795622843889}]
+users ERR no such table: users
+[started step-1 on :4101 pid=13675]
+== DB after step-1 start
+lists [{"id":1,"user_id":null,"slug":"projet-script-alert-1-script-84be65","title":"Nouveau titre","description":"Desc <img src=x onerror=alert(1)>\n\nP2","created_at":1795622837282},{"id":2,"user_id":null,"slug":"csrf-32b610","title":"csrf","description":"","created_at":1795622846667}]
+subscribers [{"id":3,"list_id":1,"email":"=cmd|calc@evil.co","created_at":1795622838690},{"id":4,"list_id":1,"email":"bob@example.com","created_at":1795622839163},{"id":5,"list_id":1,"email":"rl1@example.com","created_at":1795622843795},{"id":6,"list_id":1,"email":"rl2@example.com","created_at":1795622843889}]
+users []
+== old public page still up?
+GET /w/SLUG -> 200
+>>> POST http://127.0.0.1:4101/api/w/projet-script-alert-1-script-84be65/subscribe -H Content-Type:application/json -d {"email":"after-upgrade@example.com"}
+{"ok":true,"position":23,"already":false,"total":23}
+<<< HTTP 200
+== old step-0 access paths
+>>> GET http://127.0.0.1:4101/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 -o /dev/null
+
+<<< HTTP 404
+>>> GET http://127.0.0.1:4101/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5 
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4101/api/admin/J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5/export.csv 
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> POST http://127.0.0.1:4101/api/lists/summary -H Content-Type:application/json -d {"tokens":["J-lkOxtKBeZ7XJG8JGtMVTcUahgjZLS5"]}
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+== new account: can it see / claim the old list?
+>>> GET http://127.0.0.1:4101/api/lists -b <racine>/_harness/audit/run-1/data/up0to1/o.jar
+{"user":{"email":"owner@example.com"},"lists":[]}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4101/api/lists/projet-script-alert-1-script-84be65 -b <racine>/_harness/audit/run-1/data/up0to1/o.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4101/api/lists/projet-script-alert-1-script-84be65/export.csv -b <racine>/_harness/audit/run-1/data/up0to1/o.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> PATCH http://127.0.0.1:4101/api/lists/projet-script-alert-1-script-84be65 -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/up0to1/o.jar -d {"title":"claim"}
+{"error":"Liste introuvable."}
+<<< HTTP 404
+[stopped pid=13675]
+== DB final
+lists [{"id":1,"user_id":null,"slug":"projet-script-alert-1-script-84be65","title":"Nouveau titre","description":"Desc <img src=x onerror=alert(1)>\n\nP2","created_at":1795622837282},{"id":2,"user_id":null,"slug":"csrf-32b610","title":"csrf","description":"","created_at":1795622846667}]
+subscribers [{"id":3,"list_id":1,"email":"=cmd|calc@evil.co","created_at":1795622838690},{"id":4,"list_id":1,"email":"bob@example.com","created_at":1795622839163},{"id":5,"list_id":1,"email":"rl1@example.com","created_at":1795622843795},{"id":6,"list_id":1,"email":"rl2@example.com","created_at":1795622843889}]
+users [{"id":1,"email":"owner@example.com","password_hash":"scrypt$16384$8$1$YMGEnIzfVzTkXZYZBlW9WQ==$JTWAZbT4Y70Ck2Kr67AiujTb4f/W51H6j7yhdmgzag7tW6Ypd4V6+4+mcikNS9wCXdlOGrvQA2wVJY9FtS/rcQ==","created_at":1795622984469}]

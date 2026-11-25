@@ -1,0 +1,195 @@
+PID=17191 FAKE_PID=17186 EVIL_PID=17188
+Waitlist prêt sur http://localhost:4303
+##### 1. UPGRADE from step-2 data
+plan A: {"billingEnabled":true,"pro":true,"limit":null,"used":17,"locked":0,"status":"active","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":101,"locked":1,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+lists B: {"lists":[{"slug":"b-second-list-2f1f6a","title":"B second list","description":"","created_at":"2026-11-25T16:12:44.144Z","total":1,"last7":1,"locked":1},{"slug":"liste-b-secrete-d6491c","title":"Liste B v2","description":"d2","created_at":"2026-11-25T16:10:31.046Z","total":100,"last7":100,"locked":0}],"plan":{"billingEnabled":true,"pro":false,"limit":100,"used":101,"locked":1,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}}
+dashboard B: {"total":100,"locked":0,"referred":0,"withEmail":100,"boost":5,"sampleLocked":[]}
+subscribers without ref_code: [{"n":0}]  total: [{"n":118,"codes":118}]
+[{"id":1,"slug":"mon-projet-script-alert-1-script-9a6aab","referral_boost":5,"user_id":1},{"id":2,"slug":"x-y-z-4cb6e5","referral_boost":5,"user_id":null},{"id":3,"slug":"rl-1-03570a","referral_boost":5,"user_id":null},{"id":4,"slug":"rl-2-e32da9","referral_boost":5,"user_id":null},{"id":5,"slug":"rl-3-89859b","referral_boost":5,"user_id":null},{"id":6,"slug":"rl-4-cf0042","referral_boost":5,"user_id":null},{"id":7,"slug":"rl-5-75c2da","referral_boost":5,"user_id":null},{"id":8,"slug":"rl-6-e05338","referral_boost":5,"user_id":null},{"id":9,"slug":"liste-a-7c2c12","referral_boost":5,"user_id":1},{"id":10,"slug":"liste-b-secrete-d6491c","referral_boost":5,"user_id":2},{"id":11,"slug":"csrf-textplain-no-origin-3da63d","referral_boost":5,"user_id":1},{"id":12,"slug":"b-second-list-2f1f6a","referral_boost":5,"user_id":2}]
+old public page: 200   old token api: 401
+##### 1. regressions
+new:  {"ok":true,"already":false,"position":2,"total":2,"referrals":0,"ref_code":"ni6Nynbx","boost":5}
+dup:  {"ok":true,"already":true,"position":2,"total":2,"referrals":0,"ref_code":"ni6Nynbx","boost":5}
+bad:  {"error":"Adresse email invalide."}
+bot:  {"ok":true,"position":null,"ref_code":null}
+>>> PATCH /api/lists/liste-a-7c2c12 body={"title":"Liste A v4","description":"d4"} -b <racine>/_harness/audit/run-3/data/A.jar
+{"list":{"slug":"liste-a-7c2c12","title":"Liste A v4","description
+boost=3 -> 200
+boost=-1 -> 400
+boost=1001 -> 400
+boost=2.5 -> 400
+boost="abc" -> 400
+boost=null -> 200
+boost now: 0
+>>> DELETE /api/lists/liste-a-7c2c12/subscribers/194  -b <racine>/_harness/audit/run-3/data/A.jar
+{"list":{"slug":"liste-a-7c2c12","t
+--- export
+HTTP/1.1 200 OK
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="liste-a-7c2c12-inscrits.csv"
+Cache-Control: no-store
+
+﻿"rang","email","filleuls","parrain","inscrit_le","lien_parrainage"
+"1","asub1@example.com","0","","2026-11-25T16:10:31.461Z","http://127.0.0.1:4303/w/liste-a-7c2c12?ref=gngDErRp"
+
+>>> DELETE /api/lists/to-delete-4-1adc0c  -b <racine>/_harness/audit/run-3/data/A.jar
+{"ok":true}
+<<< HTTP 200
+orphans: [{"n":0}]
+##### referral: core behaviour (list R owned by A, who is Pro)
+LR=referral-b-test-b-0b3b15
+u10 (dup): {"ok":true,"already":true,"position":10,"total":10,"referrals":0,"ref_code":"341UMhMb","boost":5}
+f1 joins with u10's code: {"ok":true,"already":false,"position":11,"total":11,"referrals":0,"ref_code":"fLDcwwvX","boost":5}
+>>> GET /api/w/referral-b-test-b-0b3b15/status?code=341UMhMb  
+{"position":6,"total":11,"referrals":1,"ref_code":"341UMhMb","boost":5}
+<<< HTTP 200
+--- dup signup with ref must not credit
+u10 referrals: 1
+--- code from another list
+x-list: {"ok":true,"already":false,"position":12,"total":12,"referrals":0,"ref_code":"_rAyCnFt","boost":5}
+owner of code referrals: 0
+>>> GET /api/w/liste-a-7c2c12/status?code=341UMhMb  
+{"error":"Inscription introuvable."}
+<<< HTTP 404
+>>> GET /api/w/referral-b-test-b-0b3b15/status?code=AAAAAAAA  
+{"error":"Inscription introuvable."}
+<<< HTTP 404
+>>> GET /api/w/referral-b-test-b-0b3b15/status  
+{"error":"Inscription introuvable."}
+<<< HTTP 404
+##### 9. referral ABUSE: attacker joins last, self-refers with fake emails
+attacker joins: {"ok":true,"already":false,"position":13,"total":13,"referrals":0,"ref_code":"cKaNrT9M","boost":5}
+>>> GET /api/w/referral-b-test-b-0b3b15/status?code=cKaNrT9M  
+{"position":1,"total":16,"referrals":3,"ref_code":"cKaNrT9M","boost":5}
+<<< HTTP 200
+--- dashboard ranking
+1 attacker@example.com refs=3 by=null 
+2 u1@example.com refs=0 by=null 
+3 u2@example.com refs=0 by=null 
+4 u3@example.com refs=0 by=null 
+5 u4@example.com refs=0 by=null 
+6 u5@example.com refs=0 by=null 
+--- owner deletes one fake referee
+attacker now: {"position":4,"total":15,"referrals":2,"ref_code":"cKaNrT9M","boost":5}
+--- owner deletes a referrer (u10): child keeps existing
+[{"email":"f1@example.com","referred_by":null}]
+##### 9. info leak: anyone who knows an email gets its membership, rank and referral code
+{"ok":true,"already":true,"position":1,"total":14,"referrals":0,"ref_code":"enKuHTBC","boost":5}
+--- status endpoint rate limit (60 calls)
+     60 404
+--- reflected ref param
+0
+6:  <title>Referral &lt;b&gt;test&lt;/b&gt; — Liste d'attente</title>
+22:          <form id="join-form" class="join-form" data-slug="referral-b-test-b-0b3b15" data-title="Referral &lt;b&gt;test&lt;/b&gt;" novalidate>
+##### 2. access control with referral routes
+>>> GET /api/lists/liste-b-secrete-d6491c  -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> GET /api/lists/liste-b-secrete-d6491c/export.csv  -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> PATCH /api/lists/liste-b-secrete-d6491c body={"title":"x","referral_boost":1000} -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> DELETE /api/lists/liste-b-secrete-d6491c  -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> DELETE /api/lists/referral-b-test-b-0b3b15/subscribers/1
+B sub 187 still there: [{"n":1}]
+>>> GET /api/lists/referral-b-test-b-0b3b15  
+{"error":"Session expirée. Reconnectez-vous."}
+<<< HTTP 401
+>>> GET /api/lists/referral-b-test-b-0b3b15/export.csv  
+{"error":"Session expirée. Reconnectez-vous."}
+<<< HTTP 401
+##### 5. limit + referral on free B (B: canceled)
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":101,"locked":1,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+child of visible sub: {"ok":true,"already":false,"position":101,"total":101,"referrals":0,"ref_code":"OI3Afo61","boost":5}
+grandchild of locked: {"ok":true,"already":false,"position":102,"total":102,"referrals":0,"ref_code":"uchAsuqj","boost":5}
+dashboard B: {"total":102,"locked":2,"referred":2,"withEmail":100,"boost":5,"sampleLocked":[{"id":211,"email":null,"created_at":"2026-11-25T16:15:31.779Z","position":102,"referrals":0,"referred_by":{"locked":true},"locked":true},{"id":210,"email":null,"created_at":"2026-11-25T16:15:31.461Z","position":97,"referrals":1,"referred_by":{"email":"seed72@example.com"},"locked":true}]}
+CSV has locked emails? 0   CSV rows: 100
+raw API mentions locked emails? 0; /api/lists: 0
+﻿"rang","email","filleuls","parrain","inscrit_le","lien_parrainage"
+"1","seed72@example.com","1","","2026-11-25T16:12:28.176Z","http://127.0.0.1:4303/w/liste-b-secrete-d6491c?ref=58km712F"
+"2","seed73@example.com","0","","2026-11-25T16:12:28.279Z","http://127.0.0.1:4303/w/liste-b-secrete-d6491c?ref=5Nl4dXqJ"
+--- BYPASS again at step 4: delete 2 visible, the 2 locked become readable
+raw API mentions locked emails now? lockedchild@example.com lockedgrand@example.com 
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":100,"locked":0,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+##### 4. Stripe regression at step 4
+>>> POST /api/billing/checkout  -b <racine>/_harness/audit/run-3/data/B.jar
+{"url":"https://checkout.stripe.com/c/pay/cs_test_fake_1"}
+<<< HTTP 200
+POST /v1/checkout/sessions auth=Bearer sk_test_fake body=mode=subscription&customer=cus_fake_1&client_reference_id=2&line_items[0][price]=price_fake&line_items[0][quantity]=1&allow_promotion_codes=true&subscription_data[metadata][user_id]=2&success_url=http://127.0.0.1:4303/app/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}&cancel_url=http://127.0.0.1:4303/app/billing?checkout=cancel
+CS=cs_test_fake_2
+>>> POST /api/billing/sync body={"session_id":"cs_test_fake_2"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"plan":{"billingEnabled":true,"pro":false,"limit":100,"used":100
+>>> POST /api/billing/sync body={"session_id":"cs_test_fake_2"} -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Session introuvable."}
+<<< HTTP 404
+>>> POST /api/stripe/webhook body={"id":"evt_9","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_3"}}} 
+{"error":"Signature invalide."}
+<<< HTTP 400
+>>> POST /api/stripe/webhook body={"id":"evt_9","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_3"}}} -H Stripe-Signature: t=1795623334,v1=1908d5f49aa7948a7767143882bd82076f52b1394291dcb50fe28284f86921cd
+{"error":"Signature invalide."}
+<<< HTTP 400
+>>> POST /api/stripe/webhook body={"id":"evt_9","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_3"}}} -H Stripe-Signature: t=1795622735,v1=76337669dd1e3baa2ed78a305790531e558412d4ae8102cb9754ae02999e61de
+{"error":"Signature invalide."}
+<<< HTTP 400
+plan B before valid webhook: {"billingEnabled":true,"pro":false,"limit":100,"used":100,"locked":0,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+>>> POST /api/stripe/webhook body={"id":"evt_9","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_3"}}} -H Stripe-Signature: t=1795623335,v1=711c099af73e81836451ebebcd1b742174e3dac08c829178e811ea94159006a3
+{"received":true}
+<<< HTTP 200
+plan B after valid webhook: {"billingEnabled":true,"pro":true,"limit":null,"used":100,"locked":0,"status":"active","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+dashboard B pro: {"total":99,"locked":0,"referred":1,"withEmail":99,"boost":5,"sampleLocked":[]}
+plan B after cancel: {"billingEnabled":true,"pro":false,"limit":100,"used":100,"locked":0,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+--- Host header poisoning of Stripe return URL
+{"error":"Session expirée. Reconnectez-vous."} HTTP 401
+--- Host header in CSV links
+##### 9. open redirect (tab in next)
+logged-in: Location: /^I/127.0.0.1:4312/phish$
+fetch followed redirect to: http://127.0.0.1:4312/phish | body: LANDED ON OTHER ORIGIN 127.0.0.1:4312/phish
+logged-in with %0a: HTTP 500
+logged-out data-next = "/\n/evil.example" -> location.href resolves to http://evil.example/
+##### 3. cookie Secure behind proxy
+Set-Cookie: sid=kO8oKGcwlA-8vzc7XOL9_ca3dnmbtrRQ3E1DSjhc6_M; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000; Secure
+Set-Cookie: sid=O9zPKZ_XKdXqERC3M5f6WIZYyfwx3Cesjbw8tdQ96nA; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000
+--- login per-IP limit bypass with X-Forwarded-For (35 attempts, distinct unknown emails, rotating XFF)
+     35 401
+--- same without XFF (35 attempts)
+     28 401
+      7 429
+##### headers
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+Cache-Control: no-store
+
+##### DB
+[{"id":1,"email":"alice@example.com","ph":"scrypt$aQNek4Zw3P3d8QI9PtZ5RQ$","stripe_customer_id":"cus_fake_4","subscription_status":"active"},{"id":2,"email":"bob@example.com","ph":"scrypt$qCxiqQFHWQ5489ZIFYOilw$","stripe_customer_id":"cus_fake_1","subscription_status":"canceled"}]
+[{"id":1,"slug":"mon-projet-script-alert-1-script-9a6aab","tok":"TQ8i5TAC","user_id":1,"referral_boost":5},{"id":2,"slug":"x-y-z-4cb6e5","tok":"BpmHv6io","user_id":null,"referral_boost":5},{"id":3,"slug":"rl-1-03570a","tok":"ogXhRZC4","user_id":null,"referral_boost":5},{"id":4,"slug":"rl-2-e32da9","tok":"Z0a8RvDj","user_id":null,"referral_boost":5}]
+[{"id":211,"list_id":10,"email":"lockedgrand@example.com","ref_code":"uchAsuqj","referred_by":210},{"id":210,"list_id":10,"email":"lockedchild@example.com","ref_code":"OI3Afo61","referred_by":null},{"id":209,"list_id":13,"email":"fake2@mailinator.example","ref_code":"m2imXyVc","referred_by":207}]
+--- server log
+Waitlist prêt sur http://localhost:4303
+TypeError [ERR_INVALID_CHAR]: Invalid character in header content ["Location"]
+    at storeHeader (node:_http_outgoing:570:5)
+    at processHeader (node:_http_outgoing:565:3)
+    at ServerResponse._storeHeader (node:_http_outgoing:434:11)
+    at ServerResponse.writeHead (node:_http_server:441:8)
+    at redirect (file:///<racine>/_harness/audit/run-3/step-4/server.js:206:55)
+    at Server.<anonymous> (file:///<racine>/_harness/audit/run-3/step-4/server.js:753:24)
+    at Server.emit (node:events:508:28)
+    at parserOnIncoming (node:_http_server:1210:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17) {
+  code: 'ERR_INVALID_CHAR'
+}
+##### 7. persistence after restart
+PID=17720
+plan A: {"billingEnabled":true,"pro":true,"limit":null,"used":32,"locked":0,"status":"active","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+>>> GET /api/w/referral-b-test-b-0b3b15/status?code=cKaNrT9M  
+{"position":3,"total":14,"referrals":2,"ref_code":"cKaNrT9M","boost":5}
+<<< HTTP 200
+(listeners on 4300-4349 listed above; none expected)

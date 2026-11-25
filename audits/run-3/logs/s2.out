@@ -1,0 +1,205 @@
+##### A. step-2 on step-1 data, NO Stripe env
+PID=15161
+Waitlist prêt sur http://localhost:4302
+Paiements Stripe désactivés (STRIPE_SECRET_KEY / STRIPE_PRICE_ID absents) : tous les comptes sont illimités.
+--- old sessions/users survive migration
+>>> GET /api/me  -b <racine>/_harness/audit/run-3/data/A.jar
+{"email":"alice@example.com","plan":{"billingEnabled":false,"pro":true,"limit":null,"used":17,"locked":0,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}}
+<<< HTTP 200
+>>> GET /api/me  -b <racine>/_harness/audit/run-3/data/B.jar
+{"email":"bob@example.com","plan":{"billingEnabled":false,"pro":true,"limit":null,"used":2,"locked":0,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}}
+<<< HTTP 200
+{"lists":[{"slug":"csrf-textplain-no-origin-3da63d","title":"csrf textplain no origin","description":"","created_at":"2026-11-25T16:10:36.631Z","total":0,"last7":0,"locked":0},{"slug":"liste-a-7c2c12","title":"Liste A v2","description":"new","created_at":"2026-11-25T16:10:30.744Z","total":1,"last7":1,"locked":0},{"slug":"mon-projet-script-alert-1-script-9a6aab","title":"Titre modifie","description":"nouvelle desc","created_at":"2026-11-25T16:08:05.687Z","total":16,"last7":16,"locked":0}],"plan":
+>>> POST /api/billing/checkout  -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Les paiements ne sont pas configurés sur ce serveur."}
+<<< HTTP 400
+>>> POST /api/billing/sync body={"session_id":"cs_test_x"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Les paiements ne sont pas configurés sur ce serveur."}
+<<< HTTP 400
+--- webhook with no secret configured, forged body
+>>> POST /api/stripe/webhook body={"type":"customer.subscription.updated","data":{"object":{"id":"sub_x"}}} 
+{"error":"Signature invalide."}
+<<< HTTP 400
+>>> POST /api/stripe/webhook body={"type":"x"} -H Stripe-Signature: t=1795623136,v1=e0556b27bba4bac15b5e1f0282b66b372ebd563948ed3710bd7825b44c9f1b80
+{"error":"Signature invalide."}
+<<< HTTP 400
+--- regressions: subscribe/dup/invalid/edit/export
+>>> POST /api/w/liste-b-secrete-d6491c/subscribe body={"email":"s2new@example.com"} 
+{"ok":true,"already":false,"position":3}
+<<< HTTP 201
+>>> POST /api/w/liste-b-secrete-d6491c/subscribe body={"email":"s2new@example.com"} 
+{"ok":true,"already":true,"position":3}
+<<< HTTP 200
+>>> POST /api/w/liste-b-secrete-d6491c/subscribe body={"email":"nope"} 
+{"error":"Adresse email invalide."}
+<<< HTTP 400
+>>> PATCH /api/lists/liste-b-secrete-d6491c body={"title":"Liste B v2","description":"d2"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"list":{"slug":"liste-b-secrete-d6491
+﻿"#","email","inscrit_le"
+"1","bsub1@example.com","2026-11-25T16:10:31.259Z"
+"2","bsub2@example.com","2026-11-25T16:10:31.353Z"
+"3","s2new@example.com","2026-11-25T16:12:16.347Z"
+--- access control spot check (A on B)
+>>> GET /api/lists/liste-b-secrete-d6491c  -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> GET /api/lists/liste-b-secrete-d6491c/export.csv  -b <racine>/_harness/audit/run-3/data/A.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+
+##### B. billing ON with fake keys + local fake Stripe
+PID=15209 FAKE_PID=15207
+Waitlist prêt sur http://localhost:4302
+plan A: {"billingEnabled":true,"pro":false,"limit":100,"used":17,"locked":0,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":3,"locked":0,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}
+--- seed 120 subscribers on B's list (X-Forwarded-For rotated, TRUST_PROXY=1)
+    120 201
+--- same IP without spoofing: 25 requests
+     20 201
+      5 429
+--- 30 concurrent signups
+     30 201
+--- 20 concurrent signups of the SAME email
+     19 200
+      1 201
+public page count: <strong>174</strong> personnes
+##### 5. limit enforcement for free B
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":174,"locked":74,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}
+dashboard B: {"total":174,"locked":74,"withEmail":100,"newestVisible":"seed97@example.com","sampleLocked":{"id":192,"email":null,"created_at":"2026-11-25T16:12:40.643Z","locked":true}}
+lists B: {"lists":[{"slug":"liste-b-secrete-d6491c","title":"Liste B v2","description":"d2","created_at":"2026-11-25T16:10:31.046Z","total":174,"last7":174,"locked":74}],"plan":{"billingEnabled":true,"pro":false,"limit":100,"used":174,"locked":74,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}}
+CSV rows (excluding header): 99
+CSV contains a locked email (conc5)? 0
+plan A (other account, own quota): {"billingEnabled":true,"pro":false,"limit":100,"used":17,"locked":0,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}
+--- second list on same account shares the quota
+>>> POST /api/w/b-second-list-2f1f6a/subscribe body={"email":"second-list@example.com"} -H X-Forwarded-For: 10.7.0.1
+{"ok":true,"already":false,"position":1}
+<<< HTTP 201
+dashboard B list2: {"total":1,"locked":1,"withEmail":0,"sampleLocked":{"id":193,"email":null,"created_at":"2026-11-25T16:12:44.416Z","locked":true}}
+##### 4. Stripe flows
+>>> PATCH /api/me body={"plan":"pro"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Route inconnue."}
+<<< HTTP 404
+>>> POST /api/billing/upgrade  -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Route inconnue."}
+<<< HTTP 404
+>>> POST /api/billing/checkout  -H X-Forwarded-For: 10.6.0.1
+{"error":"Session expirée. Reconnectez-vous."}
+<<< HTTP 401
+>>> POST /api/billing/checkout  -b <racine>/_harness/audit/run-3/data/B.jar
+{"url":"https://checkout.stripe.com/c/pay/cs_test_fake_2"}
+<<< HTTP 200
+--- what the app sent to (fake) Stripe:
+POST /v1/customers auth=Bearer sk_test_fake body=email=bob@example.com&metadata[user_id]=2
+POST /v1/checkout/sessions auth=Bearer sk_test_fake body=mode=subscription&customer=cus_fake_1&client_reference_id=2&line_items[0][price]=price_fake&line_items[0][quantity]=1&allow_promotion_codes=true&subscription_data[metadata][user_id]=2&success_url=http://127.0.0.1:4302/app/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}&cancel_url=http://127.0.0.1:4302/app/billing?checkout=cancel
+CS_B=cs_test_fake_3
+--- success URL page alone
+200
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":175,"locked":75,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}
+--- sync with bad ids
+>>> POST /api/billing/sync body={"session_id":"foo"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Session invalide."}
+<<< HTTP 400
+>>> POST /api/billing/sync body={"session_id":"cs_test_doesnotexist"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Le service de paiement est indisponible. Réessayez dans un instant."}
+<<< HTTP 502
+>>> POST /api/billing/sync body={"session_id":"cs_/../../subscriptions/sub_x"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Le service de paiement est indisponible. Réessayez dans un instant."}
+<<< HTTP 502
+--- sync with own UNPAID session
+>>> POST /api/billing/sync body={"session_id":"cs_test_fake_3"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"plan":{"billingEnabled":true,"pro":false,"limit":100,"used":175,"locked":75,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}}
+<<< HTTP 200
+--- A creates and (fake) pays a session; B tries to sync A's paid session
+CS_A=cs_test_fake_5
+SUB_A=sub_fake_6
+>>> POST /api/billing/sync body={"session_id":"cs_test_fake_5"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Session introuvable."}
+<<< HTTP 404
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":175,"locked":75,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}
+plan A (before its own sync): {"billingEnabled":true,"pro":false,"limit":100,"used":17,"locked":0,"status":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false}
+--- B's own session, subscription status incomplete (payment not completed)
+SUB_B=sub_fake_7
+>>> POST /api/billing/sync body={"session_id":"cs_test_fake_3"} -b <racine>/_harness/audit/run-3/data/B.jar
+{"plan":{"billingEnabled":true,"pro":false,"limit":100,"used":175,"locked":75,"status":"incomplete","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}}
+<<< HTTP 200
+##### webhook signature
+--- no signature (event body claims active)
+>>> POST /api/stripe/webhook body={"id":"evt_1","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_7","status":"active","customer":"cus_whatever"}}} 
+{"error":"Signature invalide."}
+<<< HTTP 400
+--- wrong secret
+>>> POST /api/stripe/webhook body={"id":"evt_1","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_7","status":"active","customer":"cus_whatever"}}} -H Stripe-Signature: t=1795623169,v1=446709309dac903889c68f004eb26df5e1d124f562b60cd79e0f4236614b4dd8
+{"error":"Signature invalide."}
+<<< HTTP 400
+--- right secret, timestamp 10 min old
+>>> POST /api/stripe/webhook body={"id":"evt_1","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_7","status":"active","customer":"cus_whatever"}}} -H Stripe-Signature: t=1795622569,v1=c115934fcb8f9e8486537222a2ee407a48afa7dbc1dd32a7bcdc6bd5de1440bd
+{"error":"Signature invalide."}
+<<< HTTP 400
+--- right secret, signature over different body
+>>> POST /api/stripe/webhook body={"id":"evt_1","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_7","status":"active","customer":"cus_whatever"}}} -H Stripe-Signature: t=1795623169,v1=9aa086abfd618b8c264b8707e77e22a88ed388db5766277f348bd16e1c268a7b
+{"error":"Signature invalide."}
+<<< HTTP 400
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":175,"locked":75,"status":"incomplete","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+--- VALID signature, event body claims active but Stripe says incomplete
+>>> POST /api/stripe/webhook body={"id":"evt_1","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_7","status":"active","customer":"cus_whatever"}}} -H Stripe-Signature: t=1795623170,v1=a85dd115c28272b47d594e922a93e696c3fbfef38b245ca1b74433f8116df8c3
+{"received":true}
+<<< HTTP 200
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":175,"locked":75,"status":"incomplete","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+--- now Stripe says active; valid webhook
+>>> POST /api/stripe/webhook body={"id":"evt_1","type":"customer.subscription.updated","data":{"object":{"id":"sub_fake_7","status":"active","customer":"cus_whatever"}}} -H Stripe-Signature: t=1795623170,v1=a85dd115c28272b47d594e922a93e696c3fbfef38b245ca1b74433f8116df8c3
+{"received":true}
+<<< HTTP 200
+plan B: {"billingEnabled":true,"pro":true,"limit":null,"used":175,"locked":0,"status":"active","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+dashboard B (pro): {"total":174,"locked":0,"withEmail":174,"newestVisible":"race@example.com"}
+CSV rows (pro): 173
+>>> POST /api/billing/checkout  -b <racine>/_harness/audit/run-3/data/B.jar
+{"error":"Vous êtes déjà abonné·e à Pro."}
+<<< HTTP 409
+>>> POST /api/billing/portal  -b <racine>/_harness/audit/run-3/data/B.jar
+{"url":"https://billing.stripe.com/p/session/fake"}
+<<< HTTP 200
+--- past_due
+plan B past_due: {"billingEnabled":true,"pro":true,"limit":null,"used":175,"locked":0,"status":"past_due","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+--- cancellation
+>>> POST /api/stripe/webhook body={"id":"evt_2","type":"customer.subscription.deleted","data":{"object":{"id":"sub_fake_7"}}} -H Stripe-Signature: t=1795623172,v1=165c0f59204d7fe9291e5cc7c176fa7dfb4d1b9422e7e19886ada803002e9360
+{"received":true}
+<<< HTTP 200
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":175,"locked":75,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+dashboard B (free again): {"total":174,"locked":74,"withEmail":100,"newestVisible":"seed97@example.com","sampleLocked":{"id":192,"email":null,"created_at":"2026-11-25T16:12:40.643Z","locked":true}}
+--- valid signature, malformed JSON / missing type
+>>> POST /api/stripe/webhook body=not json -H Stripe-Signature: t=1795623173,v1=43e9c6dc6b932e825c17f5c7a869d767674af2180a9cf774e6d8f58387996c1c
+{"error":"Erreur serveur."}
+<<< HTTP 500
+>>> POST /api/stripe/webhook body={} -H Stripe-Signature: t=1795623173,v1=6302dc8d20679c9911cbac776cda35b03b1146147f1d1acf38f5e36866d63305
+{"error":"Erreur serveur."}
+<<< HTTP 500
+--- A syncs its own paid session
+>>> POST /api/billing/sync body={"session_id":"cs_test_fake_5"} -b <racine>/_harness/audit/run-3/data/A.jar
+{"plan":{"billingEnabled":true,"pro":true,"limit":null,"used":17,"locked":0,"status":"active","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}}
+<<< HTTP 200
+##### 5. BYPASS: free B deletes visible subscribers to reveal locked ones
+locked ids: 74 visible ids: 100
+export #1 rows: 99
+after deleting 73+1 oldest visible: {"total":100,"locked":0,"withEmail":100,"newestVisible":"race@example.com"}
+export #2 rows: 99
+distinct emails across both exports: 174
+plan B (still free): {"billingEnabled":true,"pro":false,"limit":100,"used":101,"locked":1,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+--- DB billing columns
+[{"id":1,"email":"alice@example.com","stripe_customer_id":"cus_fake_4","subscription_id":"sub_fake_6","subscription_status":"active","current_period_end":1900000000,"cancel_at_period_end":0},{"id":2,"email":"bob@example.com","stripe_customer_id":"cus_fake_1","subscription_id":"sub_fake_7","subscription_status":"canceled","current_period_end":1900000000,"cancel_at_period_end":0}]
+--- host header in success_url
+--- server log
+Waitlist prêt sur http://localhost:4302
+Stripe GET checkout/sessions/cs_test_doesnotexist → 404 No such checkout.session
+Stripe GET checkout/sessions/cs_%2F..%2F..%2Fsubscriptions%2Fsub_x → 404 No such checkout.session
+SyntaxError: Unexpected token 'o', "not json" is not valid JSON
+    at JSON.parse (<anonymous>)
+    at handleStripeWebhook (file:///<racine>/_harness/audit/run-3/step-2/server.js:345:22)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Server.<anonymous> (file:///<racine>/_harness/audit/run-3/step-2/server.js:651:39)
+TypeError: Cannot read properties of undefined (reading 'startsWith')
+    at handleStripeWebhook (file:///<racine>/_harness/audit/run-3/step-2/server.js:352:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Server.<anonymous> (file:///<racine>/_harness/audit/run-3/step-2/server.js:651:39)
+##### 7. persistence after restart (billing on)
+plan A: {"billingEnabled":true,"pro":true,"limit":null,"used":17,"locked":0,"status":"active","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}
+plan B: {"billingEnabled":true,"pro":false,"limit":100,"used":101,"locked":1,"status":"canceled","currentPeriodEnd":1900000000000,"cancelAtPeriodEnd":false}

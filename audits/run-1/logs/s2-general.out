@@ -1,0 +1,238 @@
+[started step-2 on :4102 pid=15357]
+== unauthenticated reach
+GET /                                    200 -> 
+GET /app                                 302 -> http://127.0.0.1:4102/login?next=/app
+GET /app/lists/foo-123456                302 -> http://127.0.0.1:4102/login?next=%2Fapp%2Flists%2Ffoo-123456
+GET /login                               200 -> 
+GET /signup                              200 -> 
+GET /api/lists                           401 -> 
+GET /api/auth/me                         200 -> 
+GET /api/lists/foo-123456                401 -> 
+GET /api/lists/foo-123456/export.csv     401 -> 
+GET /admin/x                             404 -> 
+GET /api/admin/x                         404 -> 
+GET /api/billing                         401 -> 
+GET /static/app.html                     200 -> 
+GET /static/dashboard.html               200 -> 
+>>> POST http://127.0.0.1:4102/api/lists -H Content-Type:application/json -d {"title":"anon"}
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+>>> POST http://127.0.0.1:4102/api/lists/summary -H Content-Type:application/json -d {"tokens":["x"]}
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+== signup A / B
+HTTP/1.1 201 Created
+Set-Cookie: wl_session=5JGprcgD5zZM3KQxYaM76tugYr0F4vwVc5wOGY_Zp04; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000
+{"user":{"email":"a@example.com"}}
+HTTP/1.1 201 Created
+Set-Cookie: wl_session=JSN8ZjNFeAO5yhtfVlLBrzNaKwgCEuWyxyfQjCDcyCo; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000
+{"user":{"email":"b@example.com"}}
+== weak / dup signup (enumeration)
+>>> POST http://127.0.0.1:4102/api/auth/signup -H Content-Type:application/json -d {"email":"a@example.com","password":"whatever123"}
+{"error":"Un compte existe déjà avec cet email. Connectez-vous."}
+<<< HTTP 409
+>>> POST http://127.0.0.1:4102/api/auth/signup -H Content-Type:application/json -d {"email":"c@example.com","password":"short"}
+{"error":"Le mot de passe doit faire au moins 8 caractères."}
+<<< HTTP 400
+>>> POST http://127.0.0.1:4102/api/auth/signup -H Content-Type:application/json -d {"email":"c2@example.com","password":"12345678"}
+{"user":{"email":"c2@example.com"}}
+<<< HTTP 201
+== A creates list, B creates list
+{"slug":"liste-a-a9f4f2","title":"Liste A","description":"da"}
+{"slug":"liste-b-img-src-x-onerror-alert-1-6d8b96","title":"Liste B <img src=x onerror=alert(1)>","description":"db"}
+== public signups (B list gets 3, A list gets 1)
+>>> POST http://127.0.0.1:4102/api/w/liste-a-a9f4f2/subscribe -H Content-Type:application/json -d {"email":"a1@example.com"}
+{"ok":true,"position":1,"already":false,"total":1}
+<<< HTTP 200
+>>> POST http://127.0.0.1:4102/api/w/liste-b-img-src-x-onerror-alert-1-6d8b96/subscribe -H Content-Type:application/json -d {"email":"b1@example.com"}
+{"ok":true,"position":1,"already":true,"total":3}
+<<< HTTP 200
+>>> POST http://127.0.0.1:4102/api/w/liste-b-img-src-x-onerror-alert-1-6d8b96/subscribe -H Content-Type:application/json -d {"email":"nope"}
+{"error":"Adresse email invalide."}
+<<< HTTP 400
+== B dashboard (regression: total, edit, export)
+>>> GET http://127.0.0.1:4102/api/lists -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar
+{"user":{"email":"b@example.com"},"plan":{"plan":"free","limit":100,"used":3,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false},"lists":[{"slug":"liste-b-img-src-x-onerror-alert-1-6d8b96","title":"Liste B <img src=x onerror=alert(1)>","createdAt":1795623158832,"total":3,"week":3}]}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar
+{"user":{"email":"b@example.com"},"list":{"title":"Liste B <img src=x onerror=alert(1)>","description":"db","slug":"liste-b-img-src-x-onerror-alert-1-6d8b96","createdAt":1795623158832},"total":3,"hidden":0,"timestamps":[1795623159595,1795623159469,1795623159358],"subscribers":[{"id":3,"email":"b3@example.com","createdAt":1795623159595,"position":3},{"id":2,"email":"b2@example.com","createdAt":1795623159469,"position":2},{"id":1,"email":"b1@example.com","createdAt":1795623159358,"position":1}],"plan":{"plan":"free","limit":100,"used":3,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEn
+<<< HTTP 200
+>>> PATCH http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar -d {"description":"edited"} -o /dev/
+
+<<< HTTP 200
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96/export.csv -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar
+﻿position,email,date_inscription
+1,b1@example.com,2026-11-25T16:12:39.358Z
+2,b2@example.com,2026-11-25T16:12:39.469Z
+3,b3@example.com,2026-11-25T16:12:39.595Z
+
+<<< HTTP 200
+== ACCESS CONTROL: A against B's list
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4102/app/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar -o /dev/null
+
+<<< HTTP 404
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96/export.csv -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> PATCH http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar -d {"title":"pwned"}
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> DELETE http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+-- A deletes B's subscriber id via A's own list slug, and via B's slug
+{"user":{"email":"b@example.com"},"list":{"title":"Liste B <img src=x onerror=alert(1)>","description":"edited","slug":"liste-b-img-src-x-onerror-alert-1-6d8b96","createdAt":1795623158832},"total":3,"hidden":0,"timestamps":[1795623159595,1795623159469,1795623159358],"subscribers":[{"id":3,"email":"b3@example.com","createdAt":1795623159595,"position":3},{"id":2,"email":"b2@example.com","createdAt":
+>>> DELETE http://127.0.0.1:4102/api/lists/liste-a-a9f4f2/subscribers/1 -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Inscrit introuvable."}
+<<< HTTP 404
+>>> DELETE http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96/subscribers/1 -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4102/api/lists -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"user":{"email":"a@example.com"},"plan":{"plan":"free","limit":100,"used":1,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false},"lists":[{"slug":"liste-a-a9f4f2","title":"Liste A","createdAt":1795623158385,"total":1,"week":1}]}
+<<< HTTP 200
+-- B's data intact?
+{"user":{"email":"b@example.com"},"list":{"title":"Liste B <img src=x onerror=alert(1)>","description":"edited","slug":"liste-b-img-src-x-onerror-alert-1-6d8b96","createdAt":1795623158832},"total":3,"hidden":0,"timestamps":[1795623159595,1795623159469,1795623159358],"subscribers":[{"id":3,"email":"b
+
+-- unauth against B
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96/export.csv 
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+>>> DELETE http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+>>> DELETE http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96/subscribers/1 
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+-- method tampering / case
+>>> POST http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar -d {}
+{"error":"Liste introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96%00 -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4102/api/lists/LISTE-B-IMG-SRC-X-ONERROR-ALERT-1-6D8B96 -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Introuvable."}
+<<< HTTP 404
+== CSRF
+>>> POST http://127.0.0.1:4102/api/lists -H Content-Type:application/json -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar -H Origin: https://evil.example -d {"title":"csrf"}
+{"error":"Origine refusée."}
+<<< HTTP 403
+>>> DELETE http://127.0.0.1:4102/api/lists/liste-b-img-src-x-onerror-alert-1-6d8b96 -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar -H Origin: https://evil.example
+{"error":"Origine refusée."}
+<<< HTTP 403
+>>> POST http://127.0.0.1:4102/api/lists -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar -H Origin: null -H Content-Type: application/x-www-form-urlencoded -d title=csrf-null
+{"error":"Origine refusée."}
+<<< HTTP 403
+>>> POST http://127.0.0.1:4102/api/lists -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar -H Content-Type: application/x-www-form-urlencoded -d title=form-no-origin
+{"slug":"form-no-origin-3c34f5","title":"form-no-origin","description":""}
+<<< HTTP 201
+>>> POST http://127.0.0.1:4102/api/auth/logout -H Origin: https://evil.example -b <racine>/_harness/audit/run-1/data/s2/a.jar -c <racine>/_harness/audit/run-1/data/s2/a.jar
+{"error":"Origine refusée."}
+<<< HTTP 403
+== open redirect on /login?next=
+https://evil.example         302 -> http://127.0.0.1:4102/app
+//evil.example               302 -> http://127.0.0.1:4102/evil.example
+/\evil.example               302 -> http://127.0.0.1:4102/app
+/%2F%2Fevil.example          302 -> http://127.0.0.1:4102/app
+/app/lists/x                 302 -> http://127.0.0.1:4102/app
+/%09/evil.example            302 -> http://127.0.0.1:4102/app
+/\t/evil.example             302 -> http://127.0.0.1:4102/app
+Location: /	/evil.example
+HTTP/1.1 500 Found
+== sessions in DB / password storage
+[
+  [Object: null prototype] {
+    id: 1,
+    email: 'a@example.com',
+    password_hash: 'scrypt$16384$8$1$2OJFOhcsvKCT1MXyug62/A==$Z7+o4dnrwmcT4h49TEG/zcp4gF7DVWpwG1y5j6X5tadA9JzPq46H8hKfK2cc5uS1OjfzMu5NBYKMTj4pE2vM/Q=='
+  },
+  [Object: null prototype] {
+    id: 2,
+    email: 'b@example.com',
+    password_hash: 'scrypt$16384$8$1$QjFMvxvjW6e7QIEJSixgvw==$rzL26uJ1Emym5IQjCXZlQi04slRR+secg2gCqIAZqXRw8B3PlUTr1zs2AITUbrfXndnSzd1BiaNc6o3HBK+sfA=='
+  },
+  [Object: null prototype] {
+    id: 3,
+    email: 'c2@example.com',
+    password_hash: 'scrypt$16384$8$1$SNZ8a81hD9Ciq9u/BZjxSg==$gy13H3/u9tRI60MpKW9euUWhUsZ3NKi8xbCDZzt5aPX2ywl0Hwp5S4EoQp+wOR2oN0/+rczXNeBFtm9f4PHfEQ=='
+  }
+]
+[
+  [Object: null prototype] {
+    token_hash: '266015659c87ea4e8e703fe266b256004ebdee82f78378a5e8561dbef0c17926',
+    user_id: 1,
+    created_at: 1795623157058,
+    expires_at: 1798215157058
+  },
+  [Object: null prototype] {
+    token_hash: '12c37d22149a1250b8de03fb5c723d7370d1d8c6be11324268ed44e1966802fd',
+    user_id: 2,
+    created_at: 1795623157272,
+    expires_at: 1798215157272
+  },
+  [Object: null prototype] {
+    token_hash: 'd3a3fdd741e1160d56cb7bd17f28ca2aea74032278c5e95eb7614aa1f3a3a7c6',
+    user_id: 3,
+    created_at: 1795623158231,
+    expires_at: 1798215158231
+  }
+]
+cookie A:
+#HttpOnly_127.0.0.1	FALSE	/	FALSE	1798215157	wl_session	5JGprcgD5zZM3KQxYaM76tugYr0F4vwVc5wOGY_Zp04
+== logout invalidates server side
+HTTP/1.1 200 OK
+Set-Cookie: wl_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0
+{"ok":true}
+>>> GET http://127.0.0.1:4102/api/auth/me -b <racine>/_harness/audit/run-1/data/s2/a-old.jar
+{"user":null}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4102/api/lists -b <racine>/_harness/audit/run-1/data/s2/a-old.jar
+{"error":"Connectez-vous pour continuer."}
+<<< HTTP 401
+== login + wrong pw + enumeration + brute force
+>>> POST http://127.0.0.1:4102/api/auth/login -H Content-Type:application/json -d {"email":"a@example.com","password":"wrong-password"}
+{"error":"Email ou mot de passe incorrect."}
+<<< HTTP 401
+>>> POST http://127.0.0.1:4102/api/auth/login -H Content-Type:application/json -d {"email":"nobody@example.com","password":"wrong-password"}
+{"error":"Email ou mot de passe incorrect."}
+<<< HTTP 401
+timing existing vs missing (ms):
+a@example.com 0.058106
+zz1@example.com 0.052451
+a@example.com 0.050850
+zz2@example.com 0.052398
+brute force a@ (attempts 4..12):
+401 401 401 401 401 429 429 429 429 
+correct password while locked:
+>>> POST http://127.0.0.1:4102/api/auth/login -H Content-Type:application/json -d {"email":"a@example.com","password":"password-A-123"}
+{"error":"Trop de tentatives. Réessayez dans quelques minutes."}
+<<< HTTP 429
+XFF spoof without TRUST_PROXY:
+429 429 429 
+email case/space variants to dodge per-email key:
+429 429 429 
+== bad cookie
+>>> GET http://127.0.0.1:4102/ -H Cookie: wl_session=%
+Erreur interne du serveur.
+<<< HTTP 500
+>>> GET http://127.0.0.1:4102/w/liste-b-img-src-x-onerror-alert-1-6d8b96 -H Cookie: x=%E0%A4%A -o /dev/null
+
+<<< HTTP 500
+== restart persistence + session survives restart
+[stopped pid=15357]
+[started step-2 on :4102 pid=15879]
+>>> GET http://127.0.0.1:4102/api/lists -b <racine>/_harness/audit/run-1/data/s2/b.jar -c <racine>/_harness/audit/run-1/data/s2/b.jar
+{"user":{"email":"b@example.com"},"plan":{"plan":"free","limit":100,"used":3,"hidden":0,"status":null,"periodEnd":null,"cancelAtPeriodEnd":false,"hasCustomer":false,"billingEnabled":false},"lists":[{"slug":"form-no-origin-3c34f5","title":"form-no-origin","createdAt":1795623167693,"total":0,"week":0},{"slug":"liste-b-img-src-x-onerror-alert-1-6d8b96","title":"Liste B <img src=x onerror=alert(1)>","createdAt":1795623158832,"total":3,"week":3}]}
+<<< HTTP 200
+== XSS in dashboard payloads are JSON (client uses textContent); check content-type
+Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+Content-Type: application/json; charset=utf-8
+[stopped pid=15879]

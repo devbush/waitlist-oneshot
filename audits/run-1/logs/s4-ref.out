@@ -1,0 +1,88 @@
+[started step-4 on :4104 pid=17098]
+== attacker signs up last (12th)
+{"ok":true,"already":false,"position":12,"referrals":0,"refCode":"qvckjskt","total":12,"boost":5}
+== one real referral: +5
+{"ok":true,"already":false,"position":13,"referrals":0,"refCode":"6nvaccnd","total":13,"boost":5}
+>>> GET http://127.0.0.1:4104/api/w/ref-list-b-5aeaca/status/qvckjskt 
+{"position":7,"referrals":1,"refCode":"qvckjskt","total":13,"boost":5}
+<<< HTTP 200
+== REFERRAL ABUSE: attacker refers 3 invented addresses (plus-aliases, no email confirmation)
+{"ok":true,"already":false,"position":14,"referrals":0,"refCode":"anwzfz5h","total":14,"bo
+
+{"ok":true,"already":false,"position":15,"referrals":0,"refCode":"ks845e93","total":15,"bo
+
+{"ok":true,"already":false,"position":16,"referrals":0,"refCode":"gs6hne2b","total":16,"bo
+
+>>> GET http://127.0.0.1:4104/api/w/ref-list-b-5aeaca/status/qvckjskt 
+{"position":1,"referrals":4,"refCode":"qvckjskt","total":16,"boost":5}
+<<< HTTP 200
+== duplicate email with ref gives nothing; self-referral by re-submitting own email
+{"ok":true,"already":true,"position":13,"referrals":0,"refCode":"6nvaccnd","total":16,"boost":5}
+{"ok":true,"already":true,"position":1,"referrals":4,"refCode":"qvckjskt","total":16,"boost":5}
+== code from another list is ignored
+{"ok":true,"already":false,"position":17,"referrals":0,"refCode":"pzgdc2w2","total":17,"boost":5}
+>>> GET http://127.0.0.1:4104/api/w/other-b319e9/status/664dcysj 
+{"position":1,"referrals":0,"refCode":"664dcysj","total":1,"boost":5}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4104/api/w/ref-list-b-5aeaca/status/664dcysj 
+{"error":"Inscription introuvable."}
+<<< HTTP 404
+>>> GET http://127.0.0.1:4104/api/w/other-b319e9/status/qvckjskt 
+{"error":"Inscription introuvable."}
+<<< HTTP 404
+== INFO LEAK: anyone who knows an email learns it is on the list, plus its rank and referral code
+{"ok":true,"already":true,"position":4,"referrals":0,"refCode":"kjfsyhcr","total":17,"boost":5}
+{"ok":true,"already":false,"position":18,"referrals":0,"refCode":"wrzpqjc2","boost":5}
+== status endpoint brute force limit (65 requests, same IP)
+     55 404      10 429 
+== XSS probes on ref (GET + form POST error path + form POST success)
+24:        <input type="hidden" name="ref" value="">
+21:      <p class="invited" data-invited><span aria-hidden="true">🎁</span> Un ami vous a invité·e : inscrivez-vous pour l’aider à passer devant.</p>
+24:        <input type="hidden" name="ref" value="qvckjskt">
+24:        <input type="hidden" name="ref" value="">
+28:          <input id="email" name="email" type="email" inputmode="email" autocomplete="email" required maxlength="254"
+29:                 placeholder="vous@exemple.com" value="bad" aria-invalid="true" aria-describedby="wl-error">
+51:            <input id="share-url" class="input" readonly value="" data-share-url>
+17:    <div class="wl-card" data-page-url="http://127.0.0.1:4104/w/ref-list-b-5aeaca" data-share-text="Je viens de rejoindre la liste d’attente de Ref &quot;list&quot; &lt;b&gt;. Inscris-toi avec mon lien :" data-title="Ref &quot;list&quot; &lt;b&gt;" data-boost="5">
+44:        <p>Vous êtes <strong data-position>n°18</strong> sur la liste. On vous prévient dès que c’est prêt.</p>
+51:            <input id="share-url" class="input" readonly value="http://127.0.0.1:4104/w/ref-list-b-5aeaca?ref=qrjdz68t" data-share-url>
+56:            <a class="share-btn" data-share="x" href="https://twitter.com/intent/tweet?text=Je%20viens%20de%20rejoindre%20la%20liste%20d%E2%80%99attente%20de%20Ref%20%22list%22%20%3Cb%3E.%20Inscris-toi%20avec%20mon%20lien%20%3A&amp;url=http%3A%2F%2F127.0.0.1%3A4104%2Fw%2Fref-list-b-5aeaca%3Fref%3Dqrjdz68t" target="_blank" rel
+== Host header injection into the referral link and CSV
+51:            <input id="share-url" class="input" readonly value="http://evil.example/w/ref-list-b-5aeaca?ref=wkv25c9s" data-share-url>
+{"error":"Connectez-vous pour continuer."}== dashboard JSON for owner: rank order + referrer
+total 19 referred 5
+1 attacker@example.com referrals=5 referredBy=null id=12
+2 e1@example.com referrals=0 referredBy=null id=1
+3 e2@example.com referrals=0 referredBy=null id=2
+4 e3@example.com referrals=0 referredBy=null id=3
+5 e4@example.com referrals=0 referredBy=null id=4
+6 e5@example.com referrals=0 referredBy=null id=5
+== owner deletes one fake referee -> attacker loses 5 places?
+>>> DELETE http://127.0.0.1:4104/api/lists/ref-list-b-5aeaca/subscribers/14 -b <racine>/_harness/audit/run-1/data/s4-ref/a.jar -c <racine>/_harness/audit/run-1/data/s4-ref/a.jar
+{"ok":true}
+<<< HTTP 200
+>>> GET http://127.0.0.1:4104/api/w/ref-list-b-5aeaca/status/qvckjskt 
+{"error":"Trop de tentatives. Réessayez dans quelques minutes."}
+<<< HTTP 429
+== B cannot read A's list in step 4, status needs code
+>>> GET http://127.0.0.1:4104/api/lists/ref-list-b-5aeaca -b <racine>/_harness/audit/run-1/data/s4-ref/b.jar -c <racine>/_harness/audit/run-1/data/s4-ref/b.jar
+{"error":"Liste introuvable."}
+<<< HTTP 404
+== OPEN REDIRECT (logged-in user A), raw Location header
+/%09/evil.example        Location: /^I/evil.example$
+/%0a/evil.example        //evil.example           Location: /app$
+/%5Cevil.example         Location: /app$
+https://evil.example     Location: /app$
+/app/lists/x             Location: /app/lists/x$
+"/\t/evil.example" -> https://evil.example/
+"/app" -> https://waitlist.example/app
+== security headers on public page + HSTS?
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+X-Frame-Options: DENY
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+
+[stopped pid=17098]

@@ -1,0 +1,39 @@
+== preload check: listen(0) remapped?
+listen(0) bound to 4120
+[started step-4 on :4104 pid=18484]
+{"ok":true,"already":false,"position":8,"referrals":0,"refCode":"kcvr9mu2","tota
+
+m7 after 1 referral: {"position":2,"referrals":1,"refCode":"8v6gbm9c","total":8,"boost":5}
+owner sees referredBy = m7@example.com
+>>> DELETE http://127.0.0.1:4104/api/lists/misc-b2bea9/subscribers/9 -b <racine>/_harness/audit/run-1/data/s4-misc/a.jar -c <racine>/_harness/audit/run-1/data/s4-misc/a.jar
+{"ok":true}
+<<< HTTP 200
+m7 after owner deleted the referee: {"position":7,"referrals":0,"refCode":"8v6gbm9c","total":7,"boost":5}
+== body limit (20 KB JSON)
+413
+== long password (201 chars) / title clamp
+{"error":"Mot de passe trop long."}
+title length stored: 80
+== signup rate limit (12 accounts from one IP)
+201 201 201 201 201 201 201 201 429 429 429 429 
+== static dir reachable files
+/static/app.html             200
+/static/dashboard.html       200
+/static/auth.html            200
+/static/home.html            200
+/static/common.js            200
+/static/server.js            404
+/static/../package.json      404
+/static/..%2Fdata%2Fwaitlist.db 404
+/data/waitlist.db            404
+/server.js                   404
+/package.json                404
+/.git/config                 404
+/.env                        404
+/README.md                   404
+== perf: public signup cost on a 5,000-subscriber list (ranking recomputed on every call)
+inserted 5000 rows directly in the audit DB copy
+subscribe on 5k list: 0.041760s
+status   on 5k list: 0.026478s
+GET page on 5k list: 0.025200s
+[stopped pid=18484]
