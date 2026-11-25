@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Mes listes — Waitlist</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="container">
+    <header class="topbar">
+      <a class="brand" href="/app">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h6"/></svg></span>
+        Waitlist
+      </a>
+      <div class="user-menu">
+        <span class="avatar" data-initial="{{userEmail}}" aria-hidden="true"></span>
+        <span class="user-email">{{userEmail}}</span>
+        <button class="btn btn-ghost btn-sm" type="button" data-logout>Déconnexion</button>
+      </div>
+    </header>
+
+    <main class="page">
+      <div class="dash-head">
+        <div>
+          <h1>Mes listes</h1>
+          <p class="muted" id="lists-meta">&nbsp;</p>
+        </div>
+        <button class="btn btn-primary btn-sm" type="button" id="new-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Nouvelle liste
+        </button>
+      </div>
+
+      <div id="lists-grid" class="lists-grid">
+        <div class="card list-tile skeleton-tile"></div>
+        <div class="card list-tile skeleton-tile"></div>
+        <div class="card list-tile skeleton-tile"></div>
+      </div>
+
+      <div id="empty" class="card empty-state empty-lists hidden">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h6"/></svg></div>
+        <h3>Aucune liste pour l'instant</h3>
+        <p>Créez votre première liste d'attente : vous obtiendrez une page publique à partager.</p>
+        <button class="btn btn-primary btn-sm" type="button" id="empty-new-btn">Créer ma première liste</button>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="create-dialog">
+    <form id="create-form" novalidate>
+      <h2>Nouvelle liste d'attente</h2>
+      <div class="field">
+        <label for="title">Nom du projet</label>
+        <input class="input" id="title" name="title" maxlength="120" placeholder="Ex. Lumen — l'app de journaling" required>
+      </div>
+      <div class="field">
+        <label for="description">Description</label>
+        <textarea class="textarea" id="description" name="description" maxlength="1000" placeholder="Dites en deux phrases ce que vous construisez et pourquoi on devrait s'inscrire."></textarea>
+      </div>
+      <div id="create-error" class="alert alert-error hidden" role="alert"></div>
+      <div class="row">
+        <button class="btn btn-ghost btn-sm" type="button" id="create-cancel">Annuler</button>
+        <button class="btn btn-primary btn-sm" type="submit">Créer la liste</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/common.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

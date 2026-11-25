@@ -1,48 +1,24 @@
-// Dashboard privé : stats, graphique des inscriptions, liste des inscrits.
-const token = decodeURIComponent(location.pathname.split('/')[2] || '');
-const api = `/api/d/${encodeURIComponent(token)}`;
-const STORE_KEY = 'waitlist:lists';
-const $ = (id) => document.getElementById(id);
-const fmt = (n) => n.toLocaleString('fr-FR');
+// Dashboard d'une liste : stats, graphique des inscriptions, liste des inscrits.
+const slug = decodeURIComponent(location.pathname.split('/')[3] || '');
+const base = `/api/lists/${encodeURIComponent(slug)}`;
 const DAYS = 30;
 
 let state = null;
 let query = '';
 
 // ---------------------------------------------------------------- Données
-async function call(method = 'GET', path = '', body) {
-  const res = await fetch(api + path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || 'Une erreur est survenue.'), { status: res.status });
-  return data;
-}
+const call = (method = 'GET', path = '', body) => api(method, base + path, body);
 
 async function load() {
   try {
     state = await call();
-    remember();
     render();
   } catch (e) {
     if (state) return; // échec d'un rafraîchissement : on garde l'affichage
     $('app').classList.add('hidden');
     $('error').classList.remove('hidden');
-    $('error-text').textContent = e.status === 404 ? 'Ce dashboard est introuvable. Vérifiez le lien.' : e.message;
+    $('error-text').textContent = e.status === 404 ? 'Cette liste est introuvable.' : e.message;
   }
-}
-
-// Mémorise la liste sur cet appareil pour la retrouver depuis l'accueil.
-function remember() {
-  try {
-    const lists = JSON.parse(localStorage.getItem(STORE_KEY)) || [];
-    const i = lists.findIndex((l) => l.token === token);
-    const entry = { token, slug: state.list.slug, title: state.list.title, createdAt: state.list.created_at };
-    if (i === -1) lists.unshift(entry); else lists[i] = entry;
-    localStorage.setItem(STORE_KEY, JSON.stringify(lists));
-  } catch { /* stockage indisponible : sans importance */ }
 }
 
 // ---------------------------------------------------------------- Rendu
@@ -58,7 +34,7 @@ function render() {
   const publicUrl = `${location.origin}/w/${list.slug}`;
   $('public-url').textContent = publicUrl;
   $('view-btn').href = publicUrl;
-  $('export-btn').href = `${api}/export.csv`;
+  $('export-btn').href = `${base}/export.csv`;
 
   // Comptage par jour (heure locale)
   const counts = new Map();
@@ -111,11 +87,16 @@ function el(name, attrs = {}) {
   return node;
 }
 
+// Maximum de l'axe Y : 4 graduations entières et « rondes » (1, 2, 5, 10, 20, 25, 50…).
 function niceMax(v) {
   if (v <= 4) return 4;
-  const step = Math.pow(10, Math.floor(Math.log10(v)));
-  for (const m of [1, 2, 2.5, 5, 10]) if (m * step >= v) return m * step;
-  return 10 * step;
+  const raw = v / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 2.5, 5, 10]) {
+    const step = m * mag;
+    if (step >= raw && Number.isInteger(step)) return step * 4;
+  }
+  return 40 * mag;
 }
 
 function renderChart(days) {
@@ -220,14 +201,6 @@ function renderTable() {
 }
 
 // ---------------------------------------------------------------- Actions
-function toast(text) {
-  const t = $('toast');
-  t.textContent = text;
-  t.classList.add('show');
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove('show'), 2200);
-}
-
 async function copy(text, ok) {
   try { await navigator.clipboard.writeText(text); toast(ok); }
   catch { prompt('Copiez ce lien :', text); }
@@ -243,7 +216,6 @@ async function removeSub(s) {
 }
 
 $('copy-public').addEventListener('click', () => copy($('public-url').textContent, 'Lien public copié'));
-$('copy-dash').addEventListener('click', () => copy(location.origin + location.pathname, 'Lien privé copié'));
 $('search').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); if (state) renderTable(); });
 
 const dialog = $('edit-dialog');
@@ -262,11 +234,22 @@ $('edit-form').addEventListener('submit', async (e) => {
   if (!title) { err.textContent = 'Le titre est obligatoire.'; err.classList.remove('hidden'); return; }
   try {
     state = await call('PATCH', '', { title, description: $('edit-description').value });
-    remember();
     render();
     dialog.close();
     toast('Modifications enregistrées');
   } catch (ex) { err.textContent = ex.message; err.classList.remove('hidden'); }
+});
+
+$('delete-list').addEventListener('click', async () => {
+  const n = state.total;
+  const warning = n > 0 ? `
+
+Ses ${fmt(n)} inscrit${n > 1 ? 's' : ''} seront définitivement supprimé${n > 1 ? 's' : ''}.` : '';
+  if (!confirm(`Supprimer la liste « ${state.list.title} » ?${warning}`)) return;
+  try {
+    await call('DELETE');
+    location.href = '/app';
+  } catch (ex) { showError($('edit-error'), ex.message); }
 });
 
 if (new URLSearchParams(location.search).has('new')) {

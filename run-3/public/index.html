@@ -16,11 +16,14 @@
         <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h6"/></svg></span>
         Waitlist
       </a>
+      <nav class="nav">
+        <a class="btn btn-ghost btn-sm" href="/login">Se connecter</a>
+      </nav>
     </header>
 
     <section class="hero">
       <div>
-        <span class="eyebrow"><span class="dot"></span>Gratuit · Sans compte</span>
+        <span class="eyebrow"><span class="dot"></span>Gratuit · Prêt en 30 secondes</span>
         <h1>Lancez votre <span class="gradient-text">liste d'attente</span> en 30&nbsp;secondes.</h1>
         <p class="lead">Une page publique soignée pour récolter les emails de vos futurs utilisateurs, et un dashboard pour suivre chaque inscription.</p>
         <ul class="features">
@@ -28,37 +31,29 @@
           <li><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg></span><span><strong>Dashboard</strong> : total, rythme des inscriptions, liste complète.</span></li>
           <li><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg></span><span><strong>Export CSV</strong> en un clic, pour votre outil d'emailing.</span></li>
         </ul>
-      </div>
-
-      <div class="card create-card">
-        <h2>Créer une liste</h2>
-        <p class="sub">Vous pourrez modifier ces informations plus tard.</p>
-        <form id="create-form" novalidate>
-          <div class="field">
-            <label for="title">Nom du projet</label>
-            <input class="input" id="title" name="title" maxlength="120" placeholder="Ex. Lumen — l'app de journaling" required autofocus>
-          </div>
-          <div class="field">
-            <label for="description">Description</label>
-            <textarea class="textarea" id="description" name="description" maxlength="1000" placeholder="Dites en deux phrases ce que vous construisez et pourquoi on devrait s'inscrire."></textarea>
-          </div>
-          <div id="create-error" class="alert alert-error hidden" role="alert"></div>
-          <button class="btn btn-primary" type="submit">
-            Créer ma liste d'attente
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="/signup">
+            Créer mon compte
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          </button>
-        </form>
+          </a>
+          <a class="btn btn-ghost" href="/login">J'ai déjà un compte</a>
+        </div>
       </div>
-    </section>
 
-    <section id="my-lists" class="my-lists hidden">
-      <div class="section-title">
-        <h2>Vos listes</h2>
-        <span>Enregistrées sur cet appareil</span>
+      <div class="preview" aria-hidden="true">
+        <div class="card preview-page">
+          <span class="eyebrow"><span class="dot"></span>Bientôt disponible</span>
+          <div class="preview-title">Lumen</div>
+          <div class="preview-desc">Le journal intime qui vous aide à mieux comprendre vos journées.</div>
+          <div class="preview-form"><span>vous@exemple.com</span><span class="preview-btn">Rejoindre</span></div>
+        </div>
+        <div class="card preview-stat">
+          <div class="k">Total des inscrits</div>
+          <div class="v">1 284</div>
+          <div class="preview-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
       </div>
-      <div id="lists-grid" class="lists-grid"></div>
     </section>
   </div>
-  <script src="/static/home.js" defer></script>
 </body>
 </html>
