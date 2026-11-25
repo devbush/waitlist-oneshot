@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as db from './src/db.js';
+import * as auth from './src/auth.js';
 import * as views from './src/views.js';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -37,8 +38,8 @@ const html = (res, body, status = 200, extra = {}) =>
   send(res, status, body, 'text/html; charset=utf-8', { 'Cache-Control': 'no-store', ...extra });
 const json = (res, status, obj) =>
   send(res, status, JSON.stringify(obj), 'application/json; charset=utf-8', { 'Cache-Control': 'no-store' });
-const redirect = (res, location) => {
-  res.writeHead(303, { Location: location, ...SECURITY_HEADERS });
+const redirect = (res, location, extra = {}) => {
+  res.writeHead(303, { Location: location, 'Cache-Control': 'no-store', ...SECURITY_HEADERS, ...extra });
   res.end();
 };
 
@@ -77,20 +78,36 @@ function baseUrl(req) {
   return `${proto}://${req.headers.host || `localhost:${PORT}`}`;
 }
 
-/* Limite simple : 8 inscriptions / minute / IP. */
-const hits = new Map();
-function rateLimited(req) {
-  const ip = req.socket.remoteAddress || 'unknown';
-  const now = Date.now();
-  const recent = (hits.get(ip) || []).filter((t) => now - t < 60_000);
-  recent.push(now);
-  hits.set(ip, recent);
-  return recent.length > 8;
+/** Les formulaires authentifiés doivent venir de notre propre origine (anti-CSRF, en plus de SameSite=Lax). */
+function sameOrigin(req) {
+  const origin = req.headers.origin || req.headers.referer;
+  if (!origin) return true; // clients non-navigateurs : pas de cookie tiers à exploiter
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
 }
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, ts] of hits) if (ts.every((t) => now - t >= 60_000)) hits.delete(ip);
-}, 60_000).unref();
+
+/** N'accepte que des chemins internes pour la redirection après connexion. */
+const safeNext = (v) => (typeof v === 'string' && /^\/(?![/\\])[\w\-./?=&%]*$/.test(v) ? v : '');
+
+/* Limiteur à fenêtre glissante, par IP : record() compte un événement, blocked() teste le seuil. */
+function limiter(max, windowMs) {
+  const hits = new Map();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, ts] of hits) if (ts.every((t) => now - t >= windowMs)) hits.delete(k);
+  }, windowMs).unref();
+  const ipOf = (req) => req.socket.remoteAddress || 'unknown';
+  const recent = (req) => (hits.get(ipOf(req)) || []).filter((t) => Date.now() - t < windowMs);
+  return {
+    blocked: (req) => recent(req).length >= max,
+    record: (req) => hits.set(ipOf(req), [...recent(req), Date.now()]),
+  };
+}
+const subscribeLimit = limiter(8, 60_000); // inscriptions sur une page publique
+const authFailLimit = limiter(10, 15 * 60_000); // échecs de connexion / inscription
 
 const csvCell = (v) => {
   let s = String(v);
@@ -122,18 +139,7 @@ async function handle(req, res) {
   if (p.startsWith('/static/') && m === 'GET') return serveStatic(res, p.slice('/static/'.length));
   if (p === '/favicon.ico') return serveStatic(res, 'favicon.svg');
 
-  // Accueil + création
-  if (p === '/' && m === 'GET') return html(res, views.home());
-  if (p === '/create' && m === 'POST') {
-    const body = await readBody(req);
-    const title = str(body.title, 80);
-    const description = cleanText(body.description, 600);
-    if (!title) return html(res, views.home({ error: 'Donnez un titre à votre projet.', values: { title, description } }), 400);
-    const list = db.createList({ title, description });
-    return redirect(res, `/admin/${list.admin_token}?created=1`);
-  }
-
-  // Page publique
+  /* ---------- Page publique d'une liste (aucun compte requis) */
   if ((match = p.match(/^\/w\/([a-z0-9-]{1,64})\/?$/))) {
     const list = db.getListBySlug(match[1]);
     if (!list) {
@@ -141,12 +147,10 @@ async function handle(req, res) {
         ? json(res, 404, { error: 'not_found' })
         : html(res, views.notFound('Cette liste d’attente n’existe pas ou a été supprimée.'), 404);
     }
-
     if (m === 'GET') {
       const status = url.searchParams.get('status');
       return html(res, views.publicPage({ list, count: db.countSubscribers(list.id), status }));
     }
-
     if (m === 'POST') {
       const body = await readBody(req);
       const email = str(body.email, 254).toLowerCase();
@@ -156,28 +160,98 @@ async function handle(req, res) {
           : redirect(res, `/w/${list.slug}?status=${status}`);
 
       if (str(body.website, 200)) return respond('ok', 200); // honeypot : on fait semblant
-      if (rateLimited(req)) return respond('limit', 429);
+      if (subscribeLimit.blocked(req)) return respond('limit', 429);
+      subscribeLimit.record(req);
       if (!EMAIL_RE.test(email)) return respond('invalid', 400);
       const isNew = db.addSubscriber(list.id, email);
       return respond(isNew ? 'ok' : 'already', isNew ? 201 : 200);
     }
   }
 
-  // Dashboard (accès par jeton secret)
-  if ((match = p.match(/^\/admin\/([A-Za-z0-9_-]{20,64})(\/.*)?$/))) {
-    const list = db.getListByToken(match[1]);
-    if (!list) return html(res, views.notFound('Ce lien de dashboard n’est pas valide.'), 404);
+  // Toutes les autres actions POST exigent une requête de même origine.
+  if (m === 'POST' && !sameOrigin(req)) return html(res, views.notFound('Requête refusée.', '403'), 403);
+
+  const user = auth.currentUser(req);
+  const loginRedirect = () => redirect(res, `/login?next=${encodeURIComponent(p)}`);
+
+  /* ---------- Accueil */
+  if (p === '/' && m === 'GET') return user ? redirect(res, '/lists') : html(res, views.home());
+
+  /* ---------- Inscription / connexion / déconnexion */
+  if (p === '/signup' || p === '/login') {
+    const mode = p.slice(1);
+    if (m === 'GET') {
+      if (user) return redirect(res, '/lists');
+      return html(res, views.authPage({ mode, next: safeNext(url.searchParams.get('next')) }));
+    }
+    if (m === 'POST') {
+      const body = await readBody(req);
+      const email = str(body.email, 254).toLowerCase();
+      const password = typeof body.password === 'string' ? body.password.slice(0, 200) : '';
+      const next = safeNext(body.next);
+      const fail = (error, status = 400) => {
+        authFailLimit.record(req);
+        return html(res, views.authPage({ mode, error, email, next }), status);
+      };
+
+      if (authFailLimit.blocked(req)) return fail('Trop de tentatives. Réessayez dans quelques minutes.', 429);
+
+      let userId;
+      if (mode === 'signup') {
+        if (!EMAIL_RE.test(email)) return fail('Cette adresse email ne semble pas valide.');
+        if (password.length < 8) return fail('Le mot de passe doit contenir au moins 8 caractères.');
+        const created = db.createUser(email, await auth.hashPassword(password));
+        if (!created) return fail('Un compte existe déjà avec cet email. Connectez-vous plutôt.', 409);
+        userId = created.id;
+      } else {
+        const found = db.getUserByEmail(email);
+        const ok = await auth.verifyPassword(password, found?.password_hash);
+        if (!found || !ok) return fail('Email ou mot de passe incorrect.', 401);
+        userId = found.id;
+      }
+      return redirect(res, next || '/lists', { 'Set-Cookie': auth.startSession(req, userId) });
+    }
+  }
+
+  if (p === '/logout' && m === 'POST') {
+    return redirect(res, '/', { 'Set-Cookie': auth.endSession(req) });
+  }
+
+  /* ---------- Mes listes */
+  if (p === '/lists' || p === '/lists/') {
+    if (!user) return loginRedirect();
+    if (m === 'GET') {
+      const flags = { deleted: url.searchParams.has('deleted'), claimed: url.searchParams.has('claimed') };
+      return html(res, views.listsPage({ user, lists: db.getUserLists(user.id), flags }));
+    }
+    if (m === 'POST') {
+      const body = await readBody(req);
+      const title = str(body.title, 80);
+      const description = cleanText(body.description, 600);
+      if (!title) {
+        return html(
+          res,
+          views.listsPage({ user, lists: db.getUserLists(user.id), error: 'Donnez un titre à votre projet.', values: { title, description } }),
+          400
+        );
+      }
+      const list = db.createList(user.id, { title, description });
+      return redirect(res, `/lists/${list.slug}?created=1`);
+    }
+  }
+
+  /* ---------- Dashboard d'une liste (propriétaire uniquement) */
+  if ((match = p.match(/^\/lists\/([a-z0-9-]{1,64})(\/.*)?$/))) {
+    if (!user) return loginRedirect();
+    const list = db.getOwnedList(match[1], user.id);
+    // 404 (et non 403) : on ne révèle pas l'existence des listes des autres.
+    if (!list) return html(res, views.notFound('Cette liste n’existe pas ou ne vous appartient pas.'), 404);
     const sub = match[2] || '';
-    const self = `/admin/${list.admin_token}`;
+    const self = `/lists/${list.slug}`;
 
     if ((sub === '' || sub === '/') && m === 'GET') {
-      const flags = Object.fromEntries(['created', 'saved', 'removed', 'error'].map((k) => [k, url.searchParams.has(k)]));
-      return html(
-        res,
-        views.dashboard({ list, subscribers: db.getSubscribers(list.id), baseUrl: baseUrl(req), flags }),
-        200,
-        { 'X-Robots-Tag': 'noindex' }
-      );
+      const flags = Object.fromEntries(['created', 'saved', 'removed', 'error', 'claimed'].map((k) => [k, url.searchParams.has(k)]));
+      return html(res, views.dashboard({ user, list, subscribers: db.getSubscribers(list.id), baseUrl: baseUrl(req), flags }));
     }
 
     if (sub === '/export.csv' && m === 'GET') {
@@ -199,13 +273,23 @@ async function handle(req, res) {
 
     if (sub === '/delete' && m === 'POST') {
       db.deleteList(list.id);
-      return redirect(res, '/?deleted=1');
+      return redirect(res, '/lists?deleted=1');
     }
 
     if ((match = sub.match(/^\/subscribers\/(\d+)\/delete$/)) && m === 'POST') {
       db.deleteSubscriber(list.id, Number(match[1]));
       return redirect(res, `${self}?removed=1`);
     }
+  }
+
+  /* ---------- Anciens liens secrets (version sans comptes) : rattachement au compte */
+  if ((match = p.match(/^\/admin\/([A-Za-z0-9_-]{20,64})\/?$/)) && m === 'GET') {
+    const list = db.getListByLegacyToken(match[1]);
+    if (!list) return html(res, views.notFound('Ce lien de dashboard n’est pas valide.'), 404);
+    if (!user) return loginRedirect();
+    if (list.user_id == null && db.claimList(list.id, user.id)) return redirect(res, `/lists/${list.slug}?claimed=1`);
+    if (list.user_id === user.id) return redirect(res, `/lists/${list.slug}`);
+    return html(res, views.notFound('Cette liste appartient déjà à un autre compte.'), 404);
   }
 
   return html(res, views.notFound(), 404);
@@ -217,7 +301,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     if (status === 500) console.error(err);
-    if (!res.headersSent) html(res, views.notFound('Une erreur est survenue.'), status);
+    if (!res.headersSent) html(res, views.notFound('Une erreur est survenue.', String(status)), status);
   }
 });
 

@@ -1,6 +1,6 @@
 # Waitlist
 
-Des listes d'attente en quelques secondes : vous créez une liste pour votre projet, vous obtenez une page publique (titre, description, formulaire email) et un dashboard privé avec les inscrits, le total et un graphique des inscriptions.
+Des listes d'attente en quelques secondes. Créez un compte, créez une liste pour votre projet : vous obtenez une page publique (titre, description, formulaire email) et un dashboard avec les inscrits, le total et un graphique des inscriptions. Chaque compte ne voit que ses propres listes.
 
 Aucune dépendance : Node.js ≥ 22.13 suffit (serveur HTTP natif + SQLite intégré `node:sqlite`).
 
@@ -13,22 +13,36 @@ npm run dev        # avec rechargement automatique
 
 Variables d'environnement facultatives :
 
-| Variable   | Défaut              | Rôle                                                   |
-|------------|---------------------|--------------------------------------------------------|
-| `PORT`     | `3000`              | Port HTTP                                              |
-| `DB_PATH`  | `data/waitlist.db`  | Fichier SQLite                                         |
-| `BASE_URL` | déduit de la requête | URL publique affichée dans les liens (en production)  |
+| Variable   | Défaut               | Rôle                                                                    |
+|------------|----------------------|-------------------------------------------------------------------------|
+| `PORT`     | `3000`               | Port HTTP                                                               |
+| `DB_PATH`  | `data/waitlist.db`   | Fichier SQLite                                                          |
+| `BASE_URL` | déduit de la requête | URL publique (liens affichés + cookie `Secure` si elle commence par `https:`) |
 
-## Fonctionnement
+## Pages
 
-- **`/`**: créer une liste. Les listes créées sur cet appareil sont rappelées en bas de page.
-- **`/w/<slug>`**: page publique à partager. Inscription sans rechargement, doublons détectés, compteur d'inscrits ; fonctionne aussi sans JavaScript.
-- **`/admin/<jeton>`**: dashboard privé. Total, aujourd'hui, 7 derniers jours, histogramme sur 30 jours (avec vue tableau), recherche, suppression d'un inscrit, export CSV, modification de la page, suppression de la liste.
+| URL | Accès | Rôle |
+|---|---|---|
+| `/` | public | Présentation (redirige vers `/lists` si connecté) |
+| `/signup`, `/login` | public | Création de compte, connexion |
+| `/lists` | connecté | Mes listes (stats rapides) + création d'une liste |
+| `/lists/<slug>` | propriétaire | Dashboard : total, aujourd'hui, 7 jours, histogramme 30 jours, recherche, export CSV, édition, suppression |
+| `/w/<slug>` | public | Page d'inscription à partager (fonctionne aussi sans JavaScript) |
 
-Il n'y a pas de comptes : **l'URL du dashboard contient un jeton secret et c'est la seule clé d'accès**. Gardez-la en favori et ne la partagez pas.
+Une liste appartenant à un autre compte renvoie un 404, ce qui ne révèle même pas qu'elle existe.
 
-## Sécurité
+## Comptes & sécurité
 
-- Échappement HTML systématique, CSP stricte (aucun script inline), `Referrer-Policy: no-referrer`.
-- Anti-spam : champ « pot de miel » + limite de 8 inscriptions/minute par IP.
+- Mots de passe hachés avec **scrypt** (sel aléatoire, comparaison à temps constant, 8 caractères minimum).
+- Sessions de 30 jours : cookie `HttpOnly`, `SameSite=Lax` (et `Secure` en HTTPS). Seul le hash SHA-256 du jeton est stocké en base. La déconnexion invalide la session côté serveur.
+- Anti-CSRF : les formulaires authentifiés doivent provenir de la même origine (en-tête `Origin`/`Referer`).
+- Anti force brute : 10 échecs de connexion/inscription par IP sur 15 minutes. Les connexions réussies ne comptent pas.
+- Échappement HTML systématique, CSP stricte (aucun script ni style inline), `Referrer-Policy: no-referrer`.
+- Pages publiques : champ « pot de miel » + 8 inscriptions/minute par IP.
 - Export CSV protégé contre l'injection de formules (Excel/Sheets).
+
+Pas encore inclus : réinitialisation du mot de passe par email (il faudrait un service d'envoi d'emails).
+
+## Migration depuis la version sans comptes
+
+Les listes créées avant l'ajout des comptes n'ont pas de propriétaire. Pour en récupérer une, ouvrez son ancien lien secret `/admin/<jeton>` : on vous demande de vous connecter (ou de créer un compte), puis la liste est rattachée à votre compte. Le lien ne fonctionne qu'une fois : une liste déjà rattachée ne peut plus être revendiquée par un autre compte.

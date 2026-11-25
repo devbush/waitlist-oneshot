@@ -176,7 +176,7 @@ p.eyebrow { background: none; padding: 0; text-transform: uppercase; letter-spac
 
 .field { display: grid; gap: 7px; }
 .field > span { font-weight: 600; font-size: 13.5px; }
-input[type="text"], input[type="email"], input[type="search"], input:not([type]), textarea {
+input[type="text"], input[type="email"], input[type="password"], input[type="search"], input:not([type]), textarea {
   width: 100%;
   font: inherit; color: var(--text);
   background: var(--surface);
@@ -219,18 +219,74 @@ input:focus, textarea:focus {
 .create h2 { font-size: 21px; }
 .hint { font-size: 13px; color: var(--text-3); text-align: center; }
 
-.my-lists { grid-column: 1 / -1; }
-.my-lists h2 { font-size: 18px; margin-bottom: 14px; }
-.my-lists ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-.my-lists a {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 16px 18px; color: var(--text); font-weight: 600;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, transform 0.15s;
+.cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 32px; }
+.cta-row .btn { --h: 48px; padding: 0 22px; font-size: 15px; }
+
+/* Aperçu décoratif de l'accueil */
+.preview { position: relative; padding: 40px 0 20px; }
+.preview-card {
+  padding: 34px 30px 26px; text-align: center; transform: rotate(-1.5deg);
+  background: color-mix(in oklab, var(--surface) 86%, transparent);
+  backdrop-filter: blur(16px); box-shadow: var(--shadow-lg);
 }
-.my-lists a:hover { text-decoration: none; border-color: var(--accent); transform: translateY(-1px); }
-.my-lists a span:last-child { color: var(--text-3); font-weight: 500; font-size: 13px; }
-.my-lists a span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-title { font: 800 30px/1.1 var(--font-display); letter-spacing: -0.03em; margin: 16px 0 8px; }
+.preview-desc { color: var(--text-2); }
+.preview .join-row { margin-top: 22px; align-items: center; }
+.fake-input { flex: 1; text-align: left; padding: 0 10px; color: var(--text-3); }
+.preview .social-proof { margin-top: 20px; padding-top: 16px; font-size: 13.5px; }
+.preview-stat {
+  position: absolute; right: -28px; top: -22px; padding: 16px 18px; display: grid; gap: 2px; min-width: 190px;
+  transform: rotate(2deg); box-shadow: var(--shadow-lg);
+}
+.preview-stat strong { font: 800 26px/1.1 var(--font-display); color: var(--good); }
+.mini-bars { display: flex; align-items: flex-end; gap: 4px; height: 38px; margin-top: 8px; }
+.mini-bars i { flex: 1; border-radius: 3px 3px 0 0; background: var(--accent); }
+.mini-bars i:nth-child(1) { height: 30%; } .mini-bars i:nth-child(2) { height: 45%; }
+.mini-bars i:nth-child(3) { height: 38%; } .mini-bars i:nth-child(4) { height: 62%; }
+.mini-bars i:nth-child(5) { height: 55%; } .mini-bars i:nth-child(6) { height: 80%; }
+.mini-bars i:nth-child(7) { height: 100%; }
+
+/* Navigation compte */
+.nav-right { display: flex; align-items: center; gap: 14px; }
+.nav-right form { display: contents; }
+.nav-link { color: var(--text-2); font-weight: 600; font-size: 14px; }
+.nav-link:hover { color: var(--text); text-decoration: none; }
+.user-chip { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text-2); max-width: 240px; }
+.user-chip .avatar { width: 28px; height: 28px; font-size: 12px; }
+.user-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Connexion / inscription */
+.auth { min-height: calc(100vh - 90px); display: grid; place-items: center; padding: 24px 20px 80px; }
+.auth-card {
+  width: 100%; max-width: 420px; padding: 34px 32px 28px; display: grid; gap: 18px;
+  box-shadow: var(--shadow-lg); animation: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.auth-head { display: grid; justify-items: center; gap: 6px; text-align: center; margin-bottom: 4px; }
+.auth-head .logo { width: 44px; height: 44px; margin-bottom: 8px; }
+.auth-head h1 { font-size: 25px; font-weight: 800; }
+.auth-head .muted { font-size: 14.5px; }
+.auth .btn.block { --h: 46px; margin-top: 2px; }
+
+/* Mes listes */
+.lists-layout { display: grid; grid-template-columns: 1fr 360px; gap: 20px; align-items: start; }
+.lists-layout .create { position: sticky; top: 90px; padding: 24px; box-shadow: var(--shadow); }
+.lists-layout .create h2 { font-size: 17px; }
+.lists-layout .empty-state { padding: 56px 24px; }
+.list-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.list-card { display: flex; flex-direction: column; overflow: hidden; transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s; }
+.list-card:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.list-main { display: grid; gap: 4px; padding: 20px 20px 16px; color: var(--text); flex: 1; }
+.list-main:hover { text-decoration: none; }
+.list-main h3 { font-size: 17px; overflow-wrap: anywhere; }
+.list-main .muted { font-size: 13px; }
+.list-stats { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-top: 14px; color: var(--text-2); font-size: 14px; }
+.list-stats strong { font: 800 28px/1 var(--font-display); color: var(--text); letter-spacing: -0.02em; margin-right: 2px; }
+.trend { font-size: 12.5px; font-weight: 600; color: var(--good); background: var(--good-soft); padding: 3px 8px; border-radius: 999px; }
+.list-foot { display: flex; justify-content: space-between; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface-2); font-size: 13.5px; font-weight: 600; }
+
+.jump-new { display: none; }
+.back { justify-self: start; color: var(--text-2); font-size: 14px; font-weight: 600; margin-bottom: -8px; }
+.back:hover { color: var(--text); text-decoration: none; }
 
 /* -------------------------------------------------------- Page publique */
 
@@ -407,6 +463,10 @@ td.actions form { display: inline; }
 
 @media (max-width: 900px) {
   .home { grid-template-columns: 1fr; gap: 36px; padding-top: 16px; }
+  .lists-layout { grid-template-columns: 1fr; }
+  .lists-layout .create { position: static; scroll-margin-top: 90px; }
+  .jump-new { display: inline-flex; }
+  .user-email { display: none; }
   .stats { grid-template-columns: 1fr 1fr; }
   .hero-stat { grid-column: 1 / -1; }
   .settings { grid-template-columns: 1fr; }
@@ -419,8 +479,10 @@ td.actions form { display: inline; }
   .tools { width: 100%; }
   .tools input { flex: 1; width: auto; }
   .share { min-width: 100%; }
-  .nav .btn.ghost { font-size: 0; padding: 0 12px; }
-  .nav .btn.ghost span { font-size: 15px; }
+  .preview { display: none; }
+  .nav { padding: 16px; }
+  .nav-right { gap: 10px; }
+  .nav .brand span { display: none; }
   th, td { padding-left: 14px; padding-right: 14px; }
   td.date { font-size: 12.5px; }
   th.num, td.num { display: none; }

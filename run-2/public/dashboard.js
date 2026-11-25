@@ -1,23 +1,6 @@
 (() => {
   const data = JSON.parse(document.getElementById('dash-data').textContent);
   const dates = data.dates.map((d) => new Date(d));
-  const KEY = 'waitlist:lists';
-
-  /* ---------- Mémorise la liste sur cet appareil (accès depuis l'accueil) */
-  const readLists = () => {
-    try {
-      const v = JSON.parse(localStorage.getItem(KEY) || '[]');
-      return Array.isArray(v) ? v : [];
-    } catch {
-      return [];
-    }
-  };
-  const writeLists = (lists) => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(lists));
-    } catch {}
-  };
-  writeLists([{ token: data.token, title: data.title, slug: data.slug }, ...readLists().filter((l) => l.token !== data.token)].slice(0, 30));
 
   /* ---------- Boutons copier */
   document.querySelectorAll('[data-copy]').forEach((btn) => {
@@ -44,10 +27,7 @@
   /* ---------- Confirmations */
   document.querySelectorAll('form[data-confirm]').forEach((form) => {
     form.addEventListener('submit', (e) => {
-      if (!confirm(form.dataset.confirm)) return e.preventDefault();
-      if (form.action.endsWith('/delete') && !form.action.includes('/subscribers/')) {
-        writeLists(readLists().filter((l) => l.token !== data.token));
-      }
+      if (!confirm(form.dataset.confirm)) e.preventDefault();
     });
   });
 
@@ -97,7 +77,7 @@
   }
 
   /* ---------- Stats */
-  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const plural = (n, one, many) => `${n} ${n <= 1 ? one : many}`;
   const todayCount = days[DAYS - 1].count;
   const yesterdayCount = days[DAYS - 2].count;
   const week = days.slice(-7).reduce((s, d) => s + d.count, 0);

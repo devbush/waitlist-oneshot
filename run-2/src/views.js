@@ -6,12 +6,11 @@ const logo = `<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><li
 
 const aurora = `<div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>`;
 
-const brand = `<a class="brand" href="/">${logo}<span>Waitlist</span></a>`;
-
 const fmtDateFallback = (iso) =>
   new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC';
+const fmtDay = (iso) => new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
-const plural = (n, one, many) => (n === 1 ? one : many);
+const plural = (n, one, many) => (n <= 1 ? one : many); // en français, 0 et 1 sont au singulier
 
 function layout({ title, body, bodyClass = '', scripts = [], description = '' }) {
   return `<!doctype html>
@@ -33,12 +32,26 @@ ${scripts.map((s) => `<script src="/static/${s}" defer></script>`).join('\n')}
 </html>`;
 }
 
+/** Barre de navigation, différente selon qu'on est connecté ou non. */
+function nav(user, { sticky = false } = {}) {
+  const right = user
+    ? `<a class="nav-link" href="/lists">Mes listes</a>
+       <span class="user-chip" title="${esc(user.email)}"><span class="avatar" aria-hidden="true">${esc(user.email[0].toUpperCase())}</span><span class="user-email">${esc(user.email)}</span></span>
+       <form method="post" action="/logout"><button class="btn ghost sm" type="submit">Déconnexion</button></form>`
+    : `<a class="nav-link" href="/login">Connexion</a>
+       <a class="btn primary sm" href="/signup">Créer un compte</a>`;
+  return `<header class="nav${sticky ? ' sticky' : ''}">
+  <a class="brand" href="${user ? '/lists' : '/'}">${logo}<span>Waitlist</span></a>
+  <nav class="nav-right" aria-label="Compte">${right}</nav>
+</header>`;
+}
+
 /* ---------------------------------------------------------------- Accueil */
 
-export function home({ error = '', values = {} } = {}) {
+export function home() {
   const body = `
 ${aurora}
-<header class="nav">${brand}</header>
+${nav(null)}
 <main class="home">
   <section class="hero">
     <span class="eyebrow"><span class="spark">✦</span> Listes d'attente, sans prise de tête</span>
@@ -47,31 +60,138 @@ ${aurora}
     <ul class="perks">
       <li><span>1</span> Une page publique prête à partager</li>
       <li><span>2</span> Un formulaire email anti-doublons</li>
-      <li><span>3</span> Un dashboard privé avec export CSV</li>
+      <li><span>3</span> Un dashboard avec stats et export CSV</li>
     </ul>
+    <div class="cta-row">
+      <a class="btn primary" href="/signup">Créer mon compte gratuit <span aria-hidden="true">→</span></a>
+      <a class="btn ghost" href="/login">J’ai déjà un compte</a>
+    </div>
   </section>
 
-  <form class="card create" method="post" action="/create">
-    <h2>Nouvelle liste</h2>
-    ${error ? `<p class="alert error" role="alert">${esc(error)}</p>` : ''}
-    <label class="field">
-      <span>Titre du projet</span>
-      <input name="title" required maxlength="80" value="${esc(values.title)}" placeholder="Ex. Nebula, l'agenda qui pense pour vous" autofocus>
-    </label>
-    <label class="field">
-      <span>Description <small>optionnelle</small></span>
-      <textarea name="description" maxlength="600" rows="4" placeholder="Dites en deux phrases pourquoi on devrait s'inscrire.">${esc(values.description)}</textarea>
-    </label>
-    <button class="btn primary block" type="submit">Créer ma liste <span aria-hidden="true">→</span></button>
-    <p class="hint">Vous obtiendrez un lien public à partager et un lien privé vers votre dashboard.</p>
-  </form>
-
-  <section class="my-lists" id="my-lists" hidden>
-    <h2>Vos listes <small>sur cet appareil</small></h2>
-    <ul></ul>
-  </section>
+  <div class="preview" aria-hidden="true">
+    <div class="card preview-card">
+      <span class="eyebrow live"><span class="dot"></span> Bientôt disponible</span>
+      <p class="preview-title">Nébula</p>
+      <p class="preview-desc">L’agenda qui organise vos journées tout seul.</p>
+      <div class="join-row"><span class="fake-input">vous@exemple.com</span><span class="btn primary sm">Rejoindre</span></div>
+      <p class="social-proof"><span class="avatars"><i></i><i></i><i></i></span><span><strong>1 284</strong> personnes déjà inscrites</span></p>
+    </div>
+    <div class="card preview-stat">
+      <span class="stat-label">Cette semaine</span>
+      <strong>+312</strong>
+      <span class="mini-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+    </div>
+  </div>
 </main>`;
-  return layout({ title: 'Waitlist · Créez votre liste d’attente', body, bodyClass: 'page-home', scripts: ['home.js'] });
+  return layout({ title: 'Waitlist · Créez votre liste d’attente', body, bodyClass: 'page-home' });
+}
+
+/* ------------------------------------------------ Connexion / inscription */
+
+export function authPage({ mode, error = '', email = '', next = '' }) {
+  const signup = mode === 'signup';
+  const action = signup ? '/signup' : '/login';
+  const body = `
+${aurora}
+${nav(null)}
+<main class="auth">
+  <form class="card auth-card" method="post" action="${action}">
+    <div class="auth-head">
+      ${logo}
+      <h1>${signup ? 'Créer un compte' : 'Bon retour !'}</h1>
+      <p class="muted">${signup ? 'Lancez votre première liste d’attente en une minute.' : 'Connectez-vous pour retrouver vos listes.'}</p>
+    </div>
+    ${error ? `<p class="alert error" role="alert">${esc(error)}</p>` : ''}
+    ${next ? `<input type="hidden" name="next" value="${esc(next)}">` : ''}
+    <label class="field">
+      <span>Email</span>
+      <input type="email" name="email" required maxlength="254" autocomplete="email" value="${esc(email)}" ${email ? '' : 'autofocus'}>
+    </label>
+    <label class="field">
+      <span>Mot de passe ${signup ? '<small>8 caractères minimum</small>' : ''}</span>
+      <input type="password" name="password" required ${signup ? 'minlength="8"' : ''} maxlength="200" autocomplete="${signup ? 'new-password' : 'current-password'}" ${email ? 'autofocus' : ''}>
+    </label>
+    <button class="btn primary block" type="submit">${signup ? 'Créer mon compte' : 'Se connecter'}</button>
+    <p class="hint">${
+      signup
+        ? `Déjà inscrit·e ? <a href="/login${next ? `?next=${encodeURIComponent(next)}` : ''}">Se connecter</a>`
+        : `Pas encore de compte ? <a href="/signup${next ? `?next=${encodeURIComponent(next)}` : ''}">Créer un compte</a>`
+    }</p>
+  </form>
+</main>`;
+  return layout({ title: `${signup ? 'Créer un compte' : 'Connexion'} · Waitlist`, body, bodyClass: 'page-auth' });
+}
+
+/* ----------------------------------------------------------- Mes listes */
+
+export function listsPage({ user, lists, error = '', values = {}, flags = {} }) {
+  const cards = lists
+    .map(
+      (l) => `
+    <li class="card list-card">
+      <a class="list-main" href="/lists/${esc(l.slug)}">
+        <h3>${esc(l.title)}</h3>
+        <p class="muted">Créée le ${esc(fmtDay(l.created_at))}</p>
+        <div class="list-stats">
+          <span><strong>${l.total}</strong> ${plural(l.total, 'inscrit', 'inscrits')}</span>
+          ${l.week ? `<span class="trend">+${l.week} cette semaine</span>` : ''}
+        </div>
+      </a>
+      <div class="list-foot">
+        <a href="/lists/${esc(l.slug)}">Ouvrir le dashboard <span aria-hidden="true">→</span></a>
+        <a href="/w/${esc(l.slug)}" target="_blank" rel="noopener" class="muted">Page publique ↗</a>
+      </div>
+    </li>`
+    )
+    .join('');
+
+  const flash = flags.deleted
+    ? `<p class="toast" role="status">Liste supprimée ✓</p>`
+    : flags.claimed
+      ? `<p class="toast" role="status">Liste rattachée à votre compte ✓</p>`
+      : '';
+
+  const body = `
+${nav(user, { sticky: true })}
+<main class="dash lists-page">
+  ${flash}
+  <section class="dash-head">
+    <div>
+      <p class="eyebrow">Espace de ${esc(user.email)}</p>
+      <h1>Mes listes</h1>
+    </div>
+    <a class="btn primary sm jump-new" href="#new">+ Nouvelle liste</a>
+  </section>
+
+  <div class="lists-layout">
+    <section>
+      ${
+        lists.length
+          ? `<ul class="list-grid">${cards}</ul>`
+          : `<div class="card empty-state">
+          <div class="empty-icon" aria-hidden="true">🚀</div>
+          <h3>Aucune liste pour l’instant</h3>
+          <p>Créez votre première liste d’attente avec le formulaire. Elle sera en ligne immédiatement.</p>
+        </div>`
+      }
+    </section>
+
+    <form class="card create" method="post" action="/lists" id="new">
+      <h2>Nouvelle liste</h2>
+      ${error ? `<p class="alert error" role="alert">${esc(error)}</p>` : ''}
+      <label class="field">
+        <span>Titre du projet</span>
+        <input name="title" required maxlength="80" value="${esc(values.title)}" placeholder="Ex. Nebula, l'agenda qui pense pour vous" ${lists.length ? '' : 'autofocus'}>
+      </label>
+      <label class="field">
+        <span>Description <small>optionnelle</small></span>
+        <textarea name="description" maxlength="600" rows="4" placeholder="Dites en deux phrases pourquoi on devrait s'inscrire.">${esc(values.description)}</textarea>
+      </label>
+      <button class="btn primary block" type="submit">Créer la liste <span aria-hidden="true">→</span></button>
+    </form>
+  </div>
+</main>`;
+  return layout({ title: 'Mes listes · Waitlist', body, bodyClass: 'page-dash' });
 }
 
 /* ---------------------------------------------------------- Page publique */
@@ -132,11 +252,10 @@ ${aurora}
 
 /* -------------------------------------------------------------- Dashboard */
 
-export function dashboard({ list, subscribers, baseUrl, flags }) {
+export function dashboard({ user, list, subscribers, baseUrl, flags }) {
   const publicUrl = `${baseUrl}/w/${list.slug}`;
-  const adminUrl = `${baseUrl}/admin/${list.admin_token}`;
   const total = subscribers.length;
-  const t = esc(list.admin_token);
+  const base = `/lists/${esc(list.slug)}`;
 
   const rows = subscribers
     .map(
@@ -146,7 +265,7 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
         <td class="email"><div class="email-cell"><span class="avatar" aria-hidden="true">${esc(s.email[0].toUpperCase())}</span><span class="email-text">${esc(s.email)}</span></div></td>
         <td class="date"><time datetime="${esc(s.created_at)}">${esc(fmtDateFallback(s.created_at))}</time></td>
         <td class="actions">
-          <form method="post" action="/admin/${t}/subscribers/${s.id}/delete" data-confirm="Retirer ${esc(s.email)} de la liste ?">
+          <form method="post" action="${base}/subscribers/${s.id}/delete" data-confirm="Retirer ${esc(s.email)} de la liste ?">
             <button class="icon-btn" type="submit" title="Retirer" aria-label="Retirer ${esc(s.email)}">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>
             </button>
@@ -162,13 +281,15 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
         <div class="banner-icon" aria-hidden="true">🎉</div>
         <div class="banner-body">
           <h2>Votre liste est en ligne !</h2>
-          <p>Gardez précieusement l’adresse de cette page : <strong>c’est votre seul accès au dashboard</strong>. Ajoutez-la à vos favoris.</p>
+          <p>Partagez le lien public pour recueillir vos premières inscriptions. Vous retrouverez cette liste à tout moment dans <a href="/lists">Mes listes</a>.</p>
           <div class="copy-field">
-            <input readonly value="${esc(adminUrl)}" aria-label="Lien privé du dashboard">
-            <button class="btn sm" type="button" data-copy="${esc(adminUrl)}">Copier</button>
+            <input readonly value="${esc(publicUrl)}" aria-label="Lien public de la liste">
+            <button class="btn sm" type="button" data-copy="${esc(publicUrl)}">Copier</button>
           </div>
         </div>
       </section>`;
+  } else if (flags.claimed) {
+    flash = `<p class="toast" role="status">Liste rattachée à votre compte ✓</p>`;
   } else if (flags.saved) {
     flash = `<p class="toast" role="status">Modifications enregistrées ✓</p>`;
   } else if (flags.removed) {
@@ -178,12 +299,10 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
   }
 
   const body = `
-<header class="nav">
-  ${brand}
-  <a class="btn ghost sm" href="/w/${esc(list.slug)}" target="_blank" rel="noopener">Voir la page publique <span aria-hidden="true">↗</span></a>
-</header>
+${nav(user, { sticky: true })}
 <main class="dash">
   ${flash}
+  <a class="back" href="/lists"><span aria-hidden="true">←</span> Mes listes</a>
   <section class="dash-head">
     <div>
       <p class="eyebrow">Dashboard</p>
@@ -193,6 +312,7 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
       <span class="share-label">Lien public</span>
       <input readonly value="${esc(publicUrl)}" aria-label="Lien public de la liste">
       <button class="btn primary sm" type="button" data-copy="${esc(publicUrl)}">Copier</button>
+      <a class="btn sm" href="/w/${esc(list.slug)}" target="_blank" rel="noopener" title="Ouvrir la page publique" aria-label="Ouvrir la page publique">↗</a>
     </div>
   </section>
 
@@ -231,7 +351,7 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
       <h2>Inscrits <span class="pill">${total}</span></h2>
       <div class="tools">
         ${total ? `<input type="search" id="search" placeholder="Rechercher un email…" aria-label="Rechercher un email">` : ''}
-        ${total ? `<a class="btn sm" href="/admin/${t}/export.csv">Exporter CSV</a>` : ''}
+        ${total ? `<a class="btn sm" href="${base}/export.csv">Exporter CSV</a>` : ''}
       </div>
     </header>
     ${
@@ -250,13 +370,13 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
   </section>
 
   <section class="settings">
-    <form class="card" method="post" action="/admin/${t}/edit">
+    <form class="card" method="post" action="${base}/edit">
       <h2>Modifier la page</h2>
       <label class="field"><span>Titre</span><input name="title" required maxlength="80" value="${esc(list.title)}"></label>
       <label class="field"><span>Description</span><textarea name="description" rows="4" maxlength="600">${esc(list.description)}</textarea></label>
       <button class="btn primary" type="submit">Enregistrer</button>
     </form>
-    <form class="card danger" method="post" action="/admin/${t}/delete" data-confirm="Supprimer définitivement cette liste et ses ${total} inscrit(s) ? Cette action est irréversible.">
+    <form class="card danger" method="post" action="${base}/delete" data-confirm="Supprimer définitivement cette liste et ses ${total} inscrit(s) ? Cette action est irréversible.">
       <h2>Zone de danger</h2>
       <p class="muted">Supprimer la liste efface la page publique et tous les inscrits. Pensez à exporter le CSV avant.</p>
       <button class="btn danger-btn" type="submit">Supprimer la liste</button>
@@ -264,9 +384,6 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
   </section>
 </main>
 <script type="application/json" id="dash-data">${jsonScript({
-    slug: list.slug,
-    title: list.title,
-    token: list.admin_token,
     createdAt: list.created_at,
     dates: subscribers.map((s) => s.created_at),
   })}</script>`;
@@ -275,13 +392,13 @@ export function dashboard({ list, subscribers, baseUrl, flags }) {
 
 /* ------------------------------------------------------------------ 404 */
 
-export function notFound(message = 'Cette page n’existe pas (ou plus).') {
+export function notFound(message = 'Cette page n’existe pas (ou plus).', status = '404') {
   const body = `
 ${aurora}
 <main class="public">
   <article class="card public-card center">
-    <p class="big-code">404</p>
-    <h1>Introuvable</h1>
+    <p class="big-code">${esc(status)}</p>
+    <h1>${status === '404' ? 'Introuvable' : 'Oups'}</h1>
     <p class="desc">${esc(message)}</p>
     <a class="btn primary" href="/">Retour à l’accueil</a>
   </article>
