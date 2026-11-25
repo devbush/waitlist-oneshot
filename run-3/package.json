@@ -1,0 +1,12 @@
+{
+  "name": "waitlist",
+  "version": "1.0.0",
+  "description": "Listes d'attente : page publique + dashboard des inscrits",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning server.js",
+    "dev": "node --no-warnings=ExperimentalWarning --watch server.js"
+  }
+}

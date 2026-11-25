@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} — Liste d'attente</title>
+  <meta name="description" content="{{metaDescription}}">
+  <meta property="og:title" content="{{title}}">
+  <meta property="og:description" content="{{metaDescription}}">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="glow"></div><div class="grain"></div>
+  <div class="public-wrap">
+    <main class="public-main">
+      <div class="card public-card">
+        <div id="join-view">
+          <span class="eyebrow"><span class="dot"></span>Bientôt disponible</span>
+          <h1>{{title}}</h1>
+          <p class="desc">{{description}}</p>
+          <form id="join-form" class="join-form" data-slug="{{slug}}" novalidate>
+            <label class="sr-only" for="email">Adresse email</label>
+            <input class="input" id="email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="vous@exemple.com" required>
+            <div class="hp" aria-hidden="true"><input name="website" tabindex="-1" autocomplete="off"></div>
+            <button class="btn btn-primary" type="submit">Rejoindre la liste</button>
+          </form>
+          <div id="join-msg" class="form-msg" role="alert"></div>
+          <div class="social-proof">
+            <span class="avatars" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span>{{countLabel}}</span>
+          </div>
+        </div>
+
+        <div id="success-view" class="success hidden" aria-live="polite">
+          <div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg></div>
+          <h2 id="success-title">Vous êtes sur la liste !</h2>
+          <p id="success-text">Merci pour votre intérêt. On vous écrit dès que <strong>{{title}}</strong> est prêt.</p>
+          <div id="position" class="position hidden"><small>Votre place</small><b id="position-n"></b></div>
+        </div>
+      </div>
+    </main>
+    <footer class="powered">Propulsé par <a href="/">Waitlist</a></footer>
+  </div>
+  <script src="/static/waitlist.js" defer></script>
+</body>
+</html>
