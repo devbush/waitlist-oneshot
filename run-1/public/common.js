@@ -1,6 +1,5 @@
-// Petits utilitaires partagés par l'accueil et le dashboard.
+// Petits utilitaires partagés par les pages de l'app.
 window.WL = (() => {
-  const STORE_KEY = 'waitlist:lists';
   const fmt = new Intl.NumberFormat('fr-FR');
 
   let toastTimer;
@@ -26,14 +25,19 @@ window.WL = (() => {
     toast(message);
   }
 
+  const loginUrl = () => `/login?next=${encodeURIComponent(location.pathname)}`;
+
   async function api(path, options = {}) {
     const res = await fetch(path, {
       ...options,
+      credentials: 'same-origin',
       headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      // Session expirée pendant l'utilisation : retour à la connexion.
+      if (res.status === 401 && !options.noAuthRedirect) location.href = loginUrl();
       const err = new Error(data.error || 'Une erreur est survenue.');
       err.status = res.status;
       throw err;
@@ -41,23 +45,20 @@ window.WL = (() => {
     return data;
   }
 
-  const saved = {
-    all() {
-      try {
-        const list = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
-        return Array.isArray(list) ? list.filter((x) => x && typeof x.token === 'string') : [];
-      } catch {
-        return [];
-      }
-    },
-    add(entry) {
-      const rest = saved.all().filter((x) => x.token !== entry.token);
-      localStorage.setItem(STORE_KEY, JSON.stringify([entry, ...rest]));
-    },
-    remove(token) {
-      localStorage.setItem(STORE_KEY, JSON.stringify(saved.all().filter((x) => x.token !== token)));
-    },
-  };
+  /** Affiche l'utilisateur connecté dans la barre du haut. */
+  function showUser(user) {
+    const menu = document.querySelector('[data-usermenu]');
+    if (!menu || !user) return;
+    menu.querySelector('[data-user-email]').textContent = user.email;
+    menu.querySelector('[data-user-initial]').textContent = user.email[0];
+    menu.hidden = false;
+  }
+
+  document.addEventListener('click', async (e) => {
+    if (!e.target.closest('[data-logout]')) return;
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    location.href = '/';
+  });
 
   const el = (tag, props = {}, ...children) => {
     const node = Object.assign(document.createElement(tag), props);
@@ -65,5 +66,5 @@ window.WL = (() => {
     return node;
   };
 
-  return { fmt, toast, copy, api, saved, el };
+  return { fmt, toast, copy, api, el, showUser };
 })();

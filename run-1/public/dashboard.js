@@ -1,6 +1,7 @@
 (() => {
-  const { api, copy, saved, el, fmt, toast } = window.WL;
-  const token = decodeURIComponent(location.pathname.split('/')[2] || '');
+  const { api, copy, el, fmt, toast, showUser } = window.WL;
+  const slug = location.pathname.split('/')[3] || '';
+  const API = `/api/lists/${slug}`;
   const $ = (id) => document.getElementById(id);
   const SVG = 'http://www.w3.org/2000/svg';
   const PAGE = 25;
@@ -258,7 +259,7 @@
     link.href = publicUrl();
     link.textContent = `${location.host}/w/${list.slug}`;
     $('open-public').href = publicUrl();
-    $('export').href = `/api/admin/${encodeURIComponent(token)}/export.csv`;
+    $('export').href = `${API}/export.csv`;
     if (first) {
       $('edit-title').value = list.title;
       $('edit-desc').value = list.description;
@@ -270,7 +271,7 @@
 
   async function load({ first = false } = {}) {
     try {
-      const data = await api(`/api/admin/${encodeURIComponent(token)}`);
+      const data = await api(API);
       const signature = `${data.total}:${data.subscribers[0]?.id}:${data.list.title}:${data.list.description}`;
       if (!first && signature === state.signature) return;
       const ids = new Set(data.subscribers.map((s) => s.id));
@@ -279,8 +280,8 @@
       state.seenIds = ids;
       state.signature = signature;
       state.data = data;
+      showUser(data.user);
       if (first) {
-        saved.add({ token, slug: data.list.slug, title: data.list.title });
         $('state').hidden = true;
         $('dash').hidden = false;
       }
@@ -291,17 +292,16 @@
       $('state').replaceChildren(
         el('div', { className: 'empty' },
           el('strong', { textContent: err.status === 404 ? 'Liste introuvable' : 'Impossible de charger le dashboard' }),
-          el('span', { textContent: err.status === 404 ? 'Ce lien n’est pas valide ou la liste a été supprimée.' : err.message }),
-          el('a', { className: 'btn btn-primary', href: '/', textContent: 'Retour à l’accueil' }))
+          el('span', { textContent: err.status === 404 ? 'Cette liste n’existe pas ou n’appartient pas à votre compte.' : err.message }),
+          el('a', { className: 'btn btn-primary', href: '/app', textContent: 'Retour à mes listes' }))
       );
-      if (err.status === 404) saved.remove(token);
     }
   }
 
   async function removeSubscriber(s) {
     if (!confirm(`Retirer ${s.email} de la liste ?`)) return;
     try {
-      await api(`/api/admin/${encodeURIComponent(token)}/subscribers/${s.id}`, { method: 'DELETE' });
+      await api(`${API}/subscribers/${s.id}`, { method: 'DELETE' });
       toast('Inscrit retiré');
       await load();
     } catch (err) {
@@ -338,8 +338,7 @@
     $('edit-error').textContent = '';
     form.classList.add('is-loading');
     try {
-      state.data = await api(`/api/admin/${encodeURIComponent(token)}`, { method: 'PATCH', body: { title, description: $('edit-desc').value } });
-      saved.add({ token, slug: state.data.list.slug, title: state.data.list.title });
+      state.data = await api(API, { method: 'PATCH', body: { title, description: $('edit-desc').value } });
       render(true);
       toast('Modifications enregistrées');
     } catch (err) {
@@ -355,9 +354,8 @@
     if (answer === null) return;
     if (answer.trim() !== name) return toast('Le titre ne correspond pas, suppression annulée');
     try {
-      await api(`/api/admin/${encodeURIComponent(token)}`, { method: 'DELETE' });
-      saved.remove(token);
-      location.href = '/';
+      await api(API, { method: 'DELETE' });
+      location.href = '/app';
     } catch (err) {
       toast(err.message);
     }

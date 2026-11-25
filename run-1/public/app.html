@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Mes listes — Waitlist</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/common.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="page-home">
+  <div class="mesh" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <header class="topbar">
+    <a class="brand" href="/app">
+      <span class="brand-mark"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h7M3 11.5h4"/></svg></span>
+      Waitlist
+    </a>
+    <span class="spacer"></span>
+    <div class="usermenu" data-usermenu hidden>
+      <span class="avatar-me" data-user-initial aria-hidden="true"></span>
+      <span class="usermenu-email" data-user-email></span>
+      <button class="btn btn-ghost btn-sm" type="button" data-logout>Se déconnecter</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="state" id="state"><p>Chargement…</p></div>
+
+    <section class="mylists" id="mylists" hidden>
+      <div class="page-head">
+        <div>
+          <h1>Mes listes</h1>
+          <p class="muted" id="mylists-sub"></p>
+        </div>
+        <button class="btn btn-primary" type="button" id="new-list">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          Nouvelle liste
+        </button>
+      </div>
+      <div class="mylists-grid" id="mylists-grid"></div>
+    </section>
+
+    <section class="hero hero-compact" id="first-hero" hidden>
+      <span class="pill"><span class="pulse" aria-hidden="true"></span>Bienvenue</span>
+      <h1>Créez votre <em>première liste d’attente</em></h1>
+      <p>Donnez un titre et une description à votre projet. Votre page publique sera en ligne immédiatement.</p>
+    </section>
+
+    <section class="builder" id="builder" hidden>
+      <form class="card builder-form" id="create-form" novalidate>
+        <div class="builder-head">
+          <h2>Nouvelle liste</h2>
+          <button class="btn btn-ghost btn-sm" type="button" id="cancel-create" hidden>Annuler</button>
+        </div>
+        <div class="field">
+          <label for="title">Nom du projet</label>
+          <input class="input" id="title" name="title" maxlength="80" required placeholder="Ex. Nébula — l’agenda qui pense pour vous" autocomplete="off">
+          <span class="hint"><span>Le grand titre de votre page.</span><span data-counter="title">0/80</span></span>
+        </div>
+        <div class="field">
+          <label for="description">Description</label>
+          <textarea class="textarea" id="description" name="description" maxlength="600" rows="5" placeholder="Expliquez en deux phrases ce que vous construisez et pourquoi on devrait s’inscrire."></textarea>
+          <span class="hint"><span>Facultatif. Les sauts de ligne sont conservés.</span><span data-counter="description">0/600</span></span>
+        </div>
+        <p class="form-error" id="create-error" role="alert"></p>
+        <button class="btn btn-primary" type="submit">
+          <span class="btn-label">Créer ma liste d’attente</span>
+          <span class="spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <div class="card created" id="created" hidden>
+        <div class="created-head">
+          <div class="wl-check" aria-hidden="true"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="M15 27l7 7 15-16"/></svg></div>
+          <div>
+            <h2>Votre liste est en ligne</h2>
+            <p class="muted">Partagez la page publique pour recevoir vos premières inscriptions.</p>
+          </div>
+        </div>
+        <div class="linkbox">
+          <label for="public-url">Page publique</label>
+          <div class="row">
+            <input class="input" id="public-url" readonly>
+            <button class="btn btn-ghost" type="button" id="copy-public">Copier</button>
+          </div>
+        </div>
+        <div class="created-actions">
+          <a class="btn btn-primary" id="open-admin" href="#">Ouvrir le dashboard</a>
+          <a class="btn btn-ghost" id="open-public" href="#" target="_blank" rel="noopener">Voir la page publique</a>
+          <button class="btn btn-ghost" type="button" id="create-another">Créer une autre liste</button>
+        </div>
+      </div>
+
+      <div class="card preview" aria-label="Aperçu de la page publique">
+        <div class="preview-chrome"><i></i><i></i><i></i><span class="preview-url" id="preview-url">votre-domaine/w/mon-projet</span></div>
+        <span class="preview-tag">Aperçu en direct</span>
+        <div class="preview-body">
+          <div class="mesh" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="wl-card">
+            <span class="pill"><span class="pulse" aria-hidden="true"></span>Liste d’attente ouverte</span>
+            <h3 class="wl-title" id="preview-title">Mon super projet</h3>
+            <div class="wl-desc" id="preview-desc"><p class="placeholder">Votre description apparaîtra ici.</p></div>
+            <div class="wl-form">
+              <div class="wl-field">
+                <svg class="wl-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="M4 7l8 6 8-6"/></svg>
+                <input type="email" placeholder="vous@exemple.com" tabindex="-1" disabled>
+                <span class="btn btn-primary">Rejoindre</span>
+              </div>
+            </div>
+            <div class="wl-proof"><div class="avatars" aria-hidden="true"><i></i><i></i><i></i><i></i></div><span>Soyez parmi les premiers à rejoindre la liste</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

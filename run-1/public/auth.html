@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connexion — Waitlist</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/common.js" defer></script>
+  <script src="/static/auth.js" defer></script>
+</head>
+<body class="page-public">
+  <div class="mesh" aria-hidden="true"><span></span><span></span><span></span></div>
+  <main class="wl">
+    <a class="brand auth-brand" href="/">
+      <span class="brand-mark"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h7M3 11.5h4"/></svg></span>
+      Waitlist
+    </a>
+    <div class="wl-card auth-card">
+      <h1 class="auth-title" id="auth-title">Bon retour 👋</h1>
+      <p class="muted" id="auth-sub">Connectez-vous pour retrouver vos listes d’attente.</p>
+
+      <form class="auth-form" id="auth-form" novalidate>
+        <div class="field">
+          <label for="email">Email</label>
+          <input class="input" id="email" name="email" type="email" inputmode="email" autocomplete="email" required maxlength="254" placeholder="vous@exemple.com">
+        </div>
+        <div class="field">
+          <label for="password">Mot de passe</label>
+          <div class="password">
+            <input class="input" id="password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200">
+            <button class="btn btn-ghost btn-sm" type="button" id="toggle-password" aria-pressed="false">Afficher</button>
+          </div>
+          <span class="hint" id="password-hint" hidden><span>8 caractères minimum.</span></span>
+        </div>
+        <p class="form-error" id="auth-error" role="alert"></p>
+        <button class="btn btn-primary btn-block" type="submit">
+          <span class="btn-label" id="auth-submit">Se connecter</span>
+          <span class="spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <p class="auth-switch" id="auth-switch"></p>
+    </div>
+  </main>
+</body>
+</html>

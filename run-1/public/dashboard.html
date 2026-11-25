@@ -12,13 +12,21 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">
+    <a class="brand" href="/app">
       <span class="brand-mark"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h7M3 11.5h4"/></svg></span>
       Waitlist
     </a>
-    <span class="crumb"><span aria-hidden="true">/</span><strong id="crumb-title">Dashboard</strong></span>
+    <nav class="crumb" aria-label="Fil d’Ariane">
+      <span aria-hidden="true">/</span><a href="/app">Mes listes</a>
+      <span aria-hidden="true">/</span><strong id="crumb-title">Dashboard</strong>
+    </nav>
     <span class="spacer"></span>
     <span class="live" title="Actualisation automatique toutes les 15 secondes"><span class="pulse" aria-hidden="true"></span>En direct</span>
+    <div class="usermenu" data-usermenu hidden>
+      <span class="avatar-me" data-user-initial aria-hidden="true"></span>
+      <span class="usermenu-email" data-user-email></span>
+      <button class="btn btn-ghost btn-sm" type="button" data-logout>Se déconnecter</button>
+    </div>
   </header>
 
   <main class="container">

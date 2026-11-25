@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, scrypt, timingSafeEqual, createHash } from 'node:crypto';
+import { promisify } from 'node:util';
 import { readFile, stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -12,7 +13,10 @@ const PORT = Number(process.env.PORT) || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'waitlist.db');
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 
-const LIMITS = { title: 80, description: 600, email: 254 };
+const LIMITS = { title: 80, description: 600, email: 254, passwordMin: 8, passwordMax: 200 };
+const SESSION_COOKIE = 'wl_session';
+const SESSION_TTL = 30 * 86_400_000; // 30 jours
+const SESSION_RENEW = 15 * 86_400_000; // prolongée si elle expire dans moins de 15 jours
 
 // ---------------------------------------------------------------------------
 // Base de données
@@ -22,14 +26,54 @@ const db = new DatabaseSync(DB_PATH);
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
+  CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+`);
+
+// Migration depuis la version sans comptes (colonne admin_token, pas de propriétaire).
+// Les anciennes listes sont conservées sans propriétaire : elles restent publiques mais
+// n'apparaissent dans aucun compte.
+const listColumns = db.prepare("SELECT name FROM pragma_table_info('lists')").all().map((c) => c.name);
+if (listColumns.includes('admin_token')) {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    BEGIN;
+    CREATE TABLE lists_new (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      slug        TEXT NOT NULL UNIQUE,
+      title       TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      created_at  INTEGER NOT NULL
+    );
+    INSERT INTO lists_new (id, slug, title, description, created_at) SELECT id, slug, title, description, created_at FROM lists;
+    DROP TABLE lists;
+    ALTER TABLE lists_new RENAME TO lists;
+    COMMIT;
+    PRAGMA foreign_keys = ON;
+  `);
+}
+db.exec(`
   CREATE TABLE IF NOT EXISTS lists (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
     slug        TEXT NOT NULL UNIQUE,
     title       TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    admin_token TEXT NOT NULL UNIQUE,
     created_at  INTEGER NOT NULL
   );
+  CREATE INDEX IF NOT EXISTS idx_lists_user ON lists(user_id, created_at);
   CREATE TABLE IF NOT EXISTS subscribers (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     list_id    INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
@@ -41,11 +85,30 @@ db.exec(`
 `);
 
 const q = {
-  insertList: db.prepare('INSERT INTO lists (slug, title, description, admin_token, created_at) VALUES (?, ?, ?, ?, ?)'),
+  // Comptes & sessions
+  insertUser: db.prepare('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)'),
+  userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
+  insertSession: db.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)'),
+  sessionUser: db.prepare(`
+    SELECT u.id, u.email, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > ?`),
+  renewSession: db.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?'),
+  deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
+  purgeSessions: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
+
+  // Listes
+  insertList: db.prepare('INSERT INTO lists (user_id, slug, title, description, created_at) VALUES (?, ?, ?, ?, ?)'),
   listBySlug: db.prepare('SELECT * FROM lists WHERE slug = ?'),
-  listByToken: db.prepare('SELECT * FROM lists WHERE admin_token = ?'),
+  ownedList: db.prepare('SELECT * FROM lists WHERE slug = ? AND user_id = ?'),
+  listsByUser: db.prepare(`
+    SELECT l.slug, l.title, l.created_at,
+      (SELECT COUNT(*) FROM subscribers s WHERE s.list_id = l.id) AS total,
+      (SELECT COUNT(*) FROM subscribers s WHERE s.list_id = l.id AND s.created_at >= ?) AS week
+    FROM lists l WHERE l.user_id = ? ORDER BY l.created_at DESC, l.id DESC`),
   updateList: db.prepare('UPDATE lists SET title = ?, description = ? WHERE id = ?'),
   deleteList: db.prepare('DELETE FROM lists WHERE id = ?'),
+
+  // Inscrits
   count: db.prepare('SELECT COUNT(*) AS n FROM subscribers WHERE list_id = ?'),
   insertSub: db.prepare('INSERT INTO subscribers (list_id, email, created_at) VALUES (?, ?, ?) ON CONFLICT (list_id, email) DO NOTHING'),
   subByEmail: db.prepare('SELECT id FROM subscribers WHERE list_id = ? AND email = ?'),
@@ -115,11 +178,12 @@ function rateLimit(key, max, windowMs) {
     hits.set(key, entry);
   }
   entry.n += 1;
-  if (entry.n > max) throw new HttpError(429, 'Trop de tentatives. Réessayez dans un instant.');
+  if (entry.n > max) throw new HttpError(429, 'Trop de tentatives. Réessayez dans quelques minutes.');
 }
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of hits) if (v.reset < now) hits.delete(k);
+  q.purgeSessions.run(now);
 }, 60_000).unref();
 
 function clientIp(req) {
@@ -128,6 +192,10 @@ function clientIp(req) {
     if (fwd) return String(fwd).split(',')[0].trim();
   }
   return req.socket.remoteAddress || 'unknown';
+}
+
+function isHttps(req) {
+  return Boolean(req.socket.encrypted) || (TRUST_PROXY && String(req.headers['x-forwarded-proto'] || '').startsWith('https'));
 }
 
 function readBody(req, limit = 16 * 1024) {
@@ -160,11 +228,24 @@ async function parseBody(req) {
   throw new HttpError(415, 'Type de contenu non supporté.');
 }
 
+/** Refuse les requêtes qui modifient des données si elles viennent d'un autre site (CSRF). */
+function checkOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return;
+  let host;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    throw new HttpError(403, 'Origine refusée.');
+  }
+  if (host !== req.headers.host) throw new HttpError(403, 'Origine refusée.');
+}
+
 const SECURITY_HEADERS = {
   'Content-Security-Policy':
     "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
+  'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
 };
 
@@ -172,10 +253,11 @@ function send(res, status, body, headers = {}) {
   res.writeHead(status, { ...SECURITY_HEADERS, ...headers });
   res.end(body);
 }
-const sendJson = (res, status, data) =>
-  send(res, status, JSON.stringify(data), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+const sendJson = (res, status, data, headers = {}) =>
+  send(res, status, JSON.stringify(data), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
 const sendHtml = (res, status, html) =>
   send(res, status, html, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+const redirect = (res, location) => send(res, 302, '', { Location: location, 'Cache-Control': 'no-store' });
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
@@ -200,16 +282,114 @@ async function serveFile(res, relPath, { cache = 'public, max-age=300' } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Comptes & sessions
+// ---------------------------------------------------------------------------
+const scryptAsync = promisify(scrypt);
+const SCRYPT = { N: 16384, r: 8, p: 1 };
+
+async function hashPassword(password) {
+  const salt = randomBytes(16);
+  const hash = await scryptAsync(password.normalize('NFKC'), salt, 64, SCRYPT);
+  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${hash.toString('base64')}`;
+}
+
+async function verifyPassword(password, stored) {
+  const [alg, N, r, p, salt, hash] = String(stored).split('$');
+  if (alg !== 'scrypt') return false;
+  const expected = Buffer.from(hash, 'base64');
+  const actual = await scryptAsync(password.normalize('NFKC'), Buffer.from(salt, 'base64'), expected.length, { N: +N, r: +r, p: +p });
+  return timingSafeEqual(actual, expected);
+}
+
+// Sert à garder un temps de réponse constant quand l'email n'existe pas.
+const DUMMY_HASH = await hashPassword(randomBytes(16).toString('hex'));
+
+const sha256 = (s) => createHash('sha256').update(s).digest('hex');
+
+function parseCookies(req) {
+  const out = {};
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+function sessionCookie(req, token, maxAgeMs) {
+  const parts = [`${SESSION_COOKIE}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${Math.floor(maxAgeMs / 1000)}`];
+  if (isHttps(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function startSession(req, userId) {
+  const token = randomBytes(32).toString('base64url');
+  const now = Date.now();
+  q.insertSession.run(sha256(token), userId, now, now + SESSION_TTL);
+  return sessionCookie(req, token, SESSION_TTL);
+}
+
+/** Retourne l'utilisateur connecté (ou null) et prolonge la session si besoin. */
+function currentUser(req, res) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const now = Date.now();
+  const hash = sha256(token);
+  const row = q.sessionUser.get(hash, now);
+  if (!row) return null;
+  if (row.expires_at - now < SESSION_RENEW) {
+    q.renewSession.run(now + SESSION_TTL, hash);
+    res.setHeader('Set-Cookie', sessionCookie(req, token, SESSION_TTL));
+  }
+  return { id: Number(row.id), email: row.email };
+}
+
+function readCredentials(body) {
+  const email = normalizeEmail(body.email);
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (!email) throw new HttpError(400, 'Adresse email invalide.');
+  return { email, password };
+}
+
+async function signup(req, body) {
+  const { email, password } = readCredentials(body);
+  if (password.length < LIMITS.passwordMin) throw new HttpError(400, `Le mot de passe doit faire au moins ${LIMITS.passwordMin} caractères.`);
+  if (password.length > LIMITS.passwordMax) throw new HttpError(400, 'Mot de passe trop long.');
+  if (q.userByEmail.get(email)) throw new HttpError(409, 'Un compte existe déjà avec cet email. Connectez-vous.');
+  const hash = await hashPassword(password);
+  let id;
+  try {
+    id = Number(q.insertUser.run(email, hash, Date.now()).lastInsertRowid);
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) throw new HttpError(409, 'Un compte existe déjà avec cet email. Connectez-vous.');
+    throw err;
+  }
+  return { user: { id, email }, cookie: startSession(req, id) };
+}
+
+async function login(req, body) {
+  const { email, password } = readCredentials(body);
+  const user = q.userByEmail.get(email);
+  const ok = await verifyPassword(password.slice(0, LIMITS.passwordMax), user ? user.password_hash : DUMMY_HASH);
+  if (!user || !ok) throw new HttpError(401, 'Email ou mot de passe incorrect.');
+  return { user: { id: Number(user.id), email: user.email }, cookie: startSession(req, user.id) };
+}
+
+/** N'accepte que des chemins internes pour la redirection après connexion. */
+function safeNext(raw) {
+  const next = String(raw || '');
+  return next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/app';
+}
+
+// ---------------------------------------------------------------------------
 // Logique métier
 // ---------------------------------------------------------------------------
-function createList({ title, description }) {
+function createList(user, { title, description }) {
   const t = cleanText(title, LIMITS.title);
   const d = cleanText(description, LIMITS.description);
   if (!t) throw new HttpError(400, 'Le titre est obligatoire.');
-  const token = randomBytes(24).toString('base64url');
   const slug = slugify(t);
-  q.insertList.run(slug, t, d, token, Date.now());
-  return { slug, adminToken: token, title: t, description: d };
+  q.insertList.run(user.id, slug, t, d, Date.now());
+  return { slug, title: t, description: d };
 }
 
 function subscribe(list, body) {
@@ -223,7 +403,7 @@ function subscribe(list, body) {
   return { ok: true, position, already: result.changes === 0, total: countFor(list.id) };
 }
 
-function adminPayload(list) {
+function listPayload(list) {
   const rows = q.subs.all(list.id);
   const total = rows.length;
   return {
@@ -233,8 +413,14 @@ function adminPayload(list) {
   };
 }
 
-function requireList(token) {
-  const list = token && q.listByToken.get(token);
+function requireUser(user) {
+  if (!user) throw new HttpError(401, 'Connectez-vous pour continuer.');
+  return user;
+}
+
+/** Une liste qui n'appartient pas à l'utilisateur est traitée comme inexistante. */
+function requireOwnedList(user, slug) {
+  const list = q.ownedList.get(slug, user.id);
   if (!list) throw new HttpError(404, 'Liste introuvable.');
   return list;
 }
@@ -322,7 +508,7 @@ function renderNotFound() {
 <body class="page-public"><div class="mesh" aria-hidden="true"><span></span><span></span><span></span></div>
 <main class="wl"><div class="wl-card center"><span class="pill">Erreur 404</span><h1 class="wl-title">Cette page n’existe pas</h1>
 <div class="wl-desc"><p>Le lien est peut-être incorrect, ou la liste a été supprimée.</p></div>
-<a class="btn btn-primary" href="/">Créer une liste d’attente</a></div></main></body></html>`;
+<a class="btn btn-primary" href="/">Retour à l’accueil</a></div></main></body></html>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,17 +519,28 @@ async function handle(req, res) {
   const { pathname } = url;
   const method = req.method;
   const ip = clientIp(req);
+  const user = currentUser(req, res);
   let m;
 
-  if (method === 'GET' && pathname === '/') return serveFile(res, 'home.html', { cache: 'no-cache' });
-  if (method === 'GET' && pathname === '/favicon.ico') return serveFile(res, 'favicon.svg');
-  if (method === 'GET' && (m = pathname.match(/^\/static\/([\w.-]+)$/))) return serveFile(res, m[1]);
-  if (method === 'GET' && (m = pathname.match(/^\/admin\/([\w-]+)$/))) {
-    requireList(m[1]);
-    return serveFile(res, 'dashboard.html', { cache: 'no-store' });
+  // --- Pages ---------------------------------------------------------------
+  if (method === 'GET') {
+    if (pathname === '/') return user ? redirect(res, '/app') : serveFile(res, 'home.html', { cache: 'no-cache' });
+    if (pathname === '/login' || pathname === '/signup') {
+      return user ? redirect(res, safeNext(url.searchParams.get('next'))) : serveFile(res, 'auth.html', { cache: 'no-cache' });
+    }
+    if (pathname === '/app') {
+      return user ? serveFile(res, 'app.html', { cache: 'no-store' }) : redirect(res, '/login?next=/app');
+    }
+    if ((m = pathname.match(/^\/app\/lists\/([a-z0-9-]+)$/))) {
+      if (!user) return redirect(res, `/login?next=${encodeURIComponent(pathname)}`);
+      requireOwnedList(user, m[1]);
+      return serveFile(res, 'dashboard.html', { cache: 'no-store' });
+    }
+    if (pathname === '/favicon.ico') return serveFile(res, 'favicon.svg');
+    if ((m = pathname.match(/^\/static\/([\w.-]+)$/))) return serveFile(res, m[1]);
   }
 
-  // Page publique
+  // Page publique d'une liste
   if ((m = pathname.match(/^\/w\/([a-z0-9-]+)$/))) {
     const list = q.listBySlug.get(m[1]);
     if (!list) return sendHtml(res, 404, renderNotFound());
@@ -363,25 +560,32 @@ async function handle(req, res) {
     }
   }
 
-  // API
-  if (method === 'POST' && pathname === '/api/lists') {
-    rateLimit(`create:${ip}`, 20, 60 * 60_000);
-    return sendJson(res, 201, createList(await parseBody(req)));
+  // --- API -----------------------------------------------------------------
+  if (pathname.startsWith('/api/') && method !== 'GET') checkOrigin(req);
+
+  // Authentification
+  if (method === 'POST' && pathname === '/api/auth/signup') {
+    rateLimit(`signup:${ip}`, 10, 60 * 60_000);
+    const { user: created, cookie } = await signup(req, await parseBody(req));
+    return sendJson(res, 201, { user: { email: created.email } }, { 'Set-Cookie': cookie });
+  }
+  if (method === 'POST' && pathname === '/api/auth/login') {
+    const body = await parseBody(req);
+    rateLimit(`login:${ip}`, 30, 15 * 60_000);
+    rateLimit(`login:${ip}:${String(body.email ?? '').trim().toLowerCase()}`, 8, 15 * 60_000);
+    const { user: logged, cookie } = await login(req, body);
+    return sendJson(res, 200, { user: { email: logged.email } }, { 'Set-Cookie': cookie });
+  }
+  if (method === 'POST' && pathname === '/api/auth/logout') {
+    const token = parseCookies(req)[SESSION_COOKIE];
+    if (token) q.deleteSession.run(sha256(token));
+    return sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
+  }
+  if (method === 'GET' && pathname === '/api/auth/me') {
+    return sendJson(res, 200, { user: user && { email: user.email } });
   }
 
-  if (method === 'POST' && pathname === '/api/lists/summary') {
-    const { tokens } = await parseBody(req);
-    if (!Array.isArray(tokens)) throw new HttpError(400, 'Paramètre « tokens » manquant.');
-    const lists = tokens
-      .slice(0, 50)
-      .map((token) => {
-        const list = typeof token === 'string' && q.listByToken.get(token);
-        return list && { token, title: list.title, slug: list.slug, total: countFor(list.id), createdAt: list.created_at };
-      })
-      .filter(Boolean);
-    return sendJson(res, 200, { lists });
-  }
-
+  // Inscription publique à une liste
   if ((m = pathname.match(/^\/api\/w\/([a-z0-9-]+)\/subscribe$/)) && method === 'POST') {
     rateLimit(`sub:${ip}`, 20, 60_000);
     const list = q.listBySlug.get(m[1]);
@@ -389,16 +593,35 @@ async function handle(req, res) {
     return sendJson(res, 200, subscribe(list, await parseBody(req)));
   }
 
-  if ((m = pathname.match(/^\/api\/admin\/([\w-]+)$/))) {
-    const list = requireList(m[1]);
-    if (method === 'GET') return sendJson(res, 200, adminPayload(list));
+  // Listes de l'utilisateur connecté
+  if (pathname === '/api/lists') {
+    requireUser(user);
+    if (method === 'GET') {
+      const lists = q.listsByUser.all(Date.now() - 7 * 86_400_000, user.id).map((l) => ({
+        slug: l.slug,
+        title: l.title,
+        createdAt: Number(l.created_at),
+        total: Number(l.total),
+        week: Number(l.week),
+      }));
+      return sendJson(res, 200, { user: { email: user.email }, lists });
+    }
+    if (method === 'POST') {
+      rateLimit(`create:${user.id}`, 30, 60 * 60_000);
+      return sendJson(res, 201, createList(user, await parseBody(req)));
+    }
+  }
+
+  if ((m = pathname.match(/^\/api\/lists\/([a-z0-9-]+)$/))) {
+    const list = requireOwnedList(requireUser(user), m[1]);
+    if (method === 'GET') return sendJson(res, 200, { user: { email: user.email }, ...listPayload(list) });
     if (method === 'PATCH') {
       const body = await parseBody(req);
       const title = body.title === undefined ? list.title : cleanText(body.title, LIMITS.title);
       const description = body.description === undefined ? list.description : cleanText(body.description, LIMITS.description);
       if (!title) throw new HttpError(400, 'Le titre est obligatoire.');
       q.updateList.run(title, description, list.id);
-      return sendJson(res, 200, adminPayload(q.listByToken.get(m[1])));
+      return sendJson(res, 200, { user: { email: user.email }, ...listPayload(q.listBySlug.get(list.slug)) });
     }
     if (method === 'DELETE') {
       q.deleteList.run(list.id);
@@ -406,23 +629,22 @@ async function handle(req, res) {
     }
   }
 
-  if ((m = pathname.match(/^\/api\/admin\/([\w-]+)\/subscribers\/(\d+)$/)) && method === 'DELETE') {
-    const list = requireList(m[1]);
+  if ((m = pathname.match(/^\/api\/lists\/([a-z0-9-]+)\/subscribers\/(\d+)$/)) && method === 'DELETE') {
+    const list = requireOwnedList(requireUser(user), m[1]);
     const { changes } = q.deleteSub.run(Number(m[2]), list.id);
     if (!changes) throw new HttpError(404, 'Inscrit introuvable.');
     return sendJson(res, 200, { ok: true });
   }
 
-  if ((m = pathname.match(/^\/api\/admin\/([\w-]+)\/export\.csv$/)) && method === 'GET') {
-    const list = requireList(m[1]);
+  if ((m = pathname.match(/^\/api\/lists\/([a-z0-9-]+)\/export\.csv$/)) && method === 'GET') {
+    const list = requireOwnedList(requireUser(user), m[1]);
     const lines = ['position,email,date_inscription'];
-    for (const s of adminPayload(list).subscribers.reverse()) {
+    for (const s of listPayload(list).subscribers.reverse()) {
       lines.push([s.position, csvCell(s.email), new Date(s.createdAt).toISOString()].join(','));
     }
-    const filename = `${list.slug}-inscrits.csv`;
     return send(res, 200, '﻿' + lines.join('\r\n') + '\r\n', {
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Disposition': `attachment; filename="${list.slug}-inscrits.csv"`,
       'Cache-Control': 'no-store',
     });
   }
