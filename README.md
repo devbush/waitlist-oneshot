@@ -72,7 +72,7 @@ git show <commit> -- run-1
 Ce qui ressort :
 
 - **Aucune faille critique.** Les fonctionnalités sensibles (comptes, paiement) sont celles qui tiennent le mieux.
-- **La règle métier du prompt est contournable dans les trois runs.** Les trois agents ont décidé seuls de masquer les inscrits au-delà de 100 au lieu de bloquer les inscriptions. Un compte gratuit exporte ses 100 inscrits visibles, les supprime, et les suivants deviennent visibles.
+- **La règle métier du prompt est contournable dans les trois runs.** Les trois agents ont décidé seuls de masquer les inscrits au-delà de 100 au lieu de bloquer les inscriptions. Un compte gratuit exporte ses 100 inscrits visibles, puis les supprime. Dans les runs 1 et 3, les inscrits masqués deviennent alors visibles. Dans le run 2, ils restent masqués, mais les places libérées servent aux inscrits suivants.
 - **Trois apps différentes pour les mêmes prompts.** Des tests dans un run et pas dans les deux autres. Des données reprises dans deux runs et perdues dans le troisième.
 - **Une trentaine de décisions par run que personne n'a demandées.** Chaque rapport d'audit en donne la liste.
 - **La même pile technique trois fois** : un serveur Node sans framework ni dépendance, avec le module SQLite intégré à Node, encore expérimental.
