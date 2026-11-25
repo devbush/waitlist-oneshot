@@ -20,6 +20,7 @@
   --good: #0a7d2c;
   --critical: #c8312f;
   --critical-soft: #fdecec;
+  --warning: #b45309;
   --blob-1: #c9b8ff;
   --blob-2: #ffc2dd;
   --blob-3: #b5e6ff;
@@ -51,6 +52,7 @@
     --good: #3ccf6a;
     --critical: #f07070;
     --critical-soft: #3a1c1f;
+    --warning: #f0a63c;
     --blob-1: #3b2a86;
     --blob-2: #6a1f4b;
     --blob-3: #154a66;
@@ -498,7 +500,7 @@ tr.is-new { animation: flash 2s ease-out; }
 .hero-cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 28px; }
 .showcase { max-width: 760px; margin: 8px auto 0; }
 .showcase .preview-body { min-height: 420px; }
-.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 48px 0 80px; }
+.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 48px 0 24px; }
 .feature { padding: 24px; display: grid; gap: 10px; align-content: start; }
 .feature h2 { font-size: 16px; }
 .feature p { color: var(--text-2); font-size: 14.5px; }
@@ -541,4 +543,77 @@ tr.is-new { animation: flash 2s ease-out; }
 @media (max-width: 560px) {
   .topbar .btn-ghost.btn-sm[href="/login"] { display: none; }
   .crumb a, .crumb a + span { display: none; }
+}
+
+/* ==========================================================================
+   Plans & facturation
+   ========================================================================== */
+.small { font-size: 13px; }
+
+/* Carte « plan » dans Mes listes */
+.plan { display: flex; align-items: center; gap: 24px; padding: 18px 22px; margin-bottom: 18px; }
+.plan .plan-body { flex: 1; min-width: 0; display: grid; gap: 10px; }
+.plan-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14.5px; }
+.plan-badge {
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border);
+}
+.plan-badge.pro { background: linear-gradient(135deg, var(--accent), #d36bd8); color: #fff; border-color: transparent; }
+.plan-over { font-size: 12.5px; font-weight: 600; color: var(--critical); }
+.plan-hint { font-size: 13px; color: var(--text-2); }
+.plan-hint.warn { color: var(--warning); font-weight: 500; }
+.plan.is-pro { background: linear-gradient(120deg, var(--accent-soft), var(--surface) 60%); }
+.plan-spinner { display: inline-block; color: var(--accent); width: 22px; height: 22px; }
+
+/* Jauge : la couleur de remplissage suit la sévérité, la piste est un ton clair de la même teinte */
+.meter { position: relative; height: 8px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; max-width: 520px; }
+.meter > span { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--accent); transition: width 0.4s ease; }
+.meter.high { background: color-mix(in srgb, var(--warning) 18%, transparent); }
+.meter.high > span { background: var(--warning); }
+.meter.full { background: var(--critical-soft); }
+.meter.full > span { background: var(--critical); }
+
+/* Bandeau « inscrits masqués » du dashboard */
+.locked {
+  position: relative; overflow: hidden; margin: 0 -24px 4px;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.locked-rows { display: grid; gap: 10px; padding: 16px 24px; filter: blur(3px); opacity: 0.6; }
+.locked-rows span { height: 14px; border-radius: 6px; background: linear-gradient(90deg, var(--border-strong) 30%, var(--border) 30% 34%, transparent 34% 52%, var(--border) 52% 70%, transparent 70%); }
+.locked-body {
+  position: absolute; inset: 0; display: flex; align-items: center; gap: 16px; padding: 0 24px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--surface) 96%, transparent) 55%, color-mix(in srgb, var(--surface) 75%, transparent));
+}
+.locked-body > div { flex: 1; min-width: 0; }
+.locked-body strong { font-size: 14.5px; }
+.locked-body p { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.locked-ico { width: 38px; height: 38px; flex: none; border-radius: 11px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.locked-ico svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Tarifs (accueil) */
+.pricing { padding: 56px 0 90px; }
+.section-intro { text-align: center; margin-bottom: 28px; }
+.section-intro h2 { font-size: clamp(1.8rem, 3.5vw, 2.4rem); font-weight: 800; letter-spacing: -0.03em; }
+.section-intro p { color: var(--text-2); margin-top: 8px; font-size: 16px; }
+.pricing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 380px)); justify-content: center; gap: 20px; }
+.price-card { position: relative; padding: 28px; display: grid; gap: 12px; align-content: start; }
+.price-card h3 { font-size: 17px; }
+.price { font-size: 15px; color: var(--text-2); }
+.price strong { font-size: 42px; font-weight: 800; letter-spacing: -0.04em; color: var(--text); }
+.price-sub { color: var(--text-2); font-size: 14px; margin-top: -6px; }
+.price-card ul { list-style: none; padding: 0; margin: 6px 0 10px; display: grid; gap: 10px; font-size: 14.5px; }
+.price-card li { position: relative; padding-left: 26px; }
+.price-card li::before {
+  content: ""; position: absolute; left: 0; top: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.2l2.2 2.2 4.8-4.8' fill='none' stroke='%236a4ce2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
+}
+.price-card.featured { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), var(--shadow-lg); }
+.price-tag { position: absolute; top: -11px; left: 28px; font-size: 11.5px; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--accent), #d36bd8); padding: 3px 10px; border-radius: 999px; }
+
+@media (max-width: 860px) {
+  .plan { flex-direction: column; align-items: stretch; }
+  .pricing-grid { grid-template-columns: minmax(0, 420px); }
+  .locked-body { flex-wrap: wrap; position: static; padding: 16px; background: var(--surface); }
+  .locked-rows { display: none; }
 }

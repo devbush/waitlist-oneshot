@@ -1,5 +1,5 @@
 (() => {
-  const { api, copy, el, fmt, showUser } = window.WL;
+  const { api, copy, el, fmt, showUser, renderPlan, toast } = window.WL;
   const $ = (id) => document.getElementById(id);
   const form = $('create-form');
   const created = $('created');
@@ -50,9 +50,31 @@
       lists = data.lists;
       $('state').hidden = true;
       renderLists();
+      renderPlan($('plan'), data.plan, { activating: activating && data.plan.plan !== 'pro' });
+      return data;
     } catch (err) {
       if (err.status !== 401) $('state').replaceChildren(el('p', { textContent: err.message }));
     }
+  }
+
+  // --- Retour depuis Stripe Checkout ----------------------------------------
+  // Le plan passe en Pro quand le webhook Stripe arrive : on attend quelques secondes.
+  const billing = new URLSearchParams(location.search).get('billing');
+  let activating = billing === 'success';
+  if (billing) history.replaceState(null, '', '/app');
+  if (billing === 'cancel') toast('Paiement annulé : vous êtes toujours sur le plan gratuit.');
+
+  async function waitForPro(attempt = 0) {
+    const data = await loadLists();
+    if (data?.plan.plan === 'pro') {
+      activating = false;
+      toast('Merci ! Votre plan Pro est actif.');
+      return;
+    }
+    if (attempt < 15) return setTimeout(() => waitForPro(attempt + 1), 2000);
+    activating = false;
+    loadLists();
+    toast('Le paiement est bien reçu, mais l’activation prend plus de temps que prévu. Rechargez la page dans une minute.');
   }
 
   function openBuilder() {
@@ -128,5 +150,6 @@
 
   $('copy-public').addEventListener('click', () => copy($('public-url').value));
 
-  loadLists();
+  if (activating) waitForPro();
+  else loadLists();
 })();

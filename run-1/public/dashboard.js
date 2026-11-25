@@ -1,5 +1,5 @@
 (() => {
-  const { api, copy, el, fmt, toast, showUser } = window.WL;
+  const { api, copy, el, fmt, toast, showUser, upgradeButton } = window.WL;
   const slug = location.pathname.split('/')[3] || '';
   const API = `/api/lists/${slug}`;
   const $ = (id) => document.getElementById(id);
@@ -31,7 +31,7 @@
   const plural = (n, one, many) => `${fmt.format(n)} ${n > 1 ? many : one}`;
 
   // --- Agrégats -------------------------------------------------------------
-  function dailyCounts(subs, days) {
+  function dailyCounts(timestamps, days) {
     const today = startOfDay(new Date());
     const buckets = [];
     const index = new Map();
@@ -40,15 +40,16 @@
       index.set(dayKey(date), buckets.length);
       buckets.push({ date, count: 0 });
     }
-    for (const s of subs) {
-      const i = index.get(dayKey(new Date(s.createdAt)));
+    for (const t of timestamps) {
+      const i = index.get(dayKey(new Date(t)));
       if (i !== undefined) buckets[i].count += 1;
     }
     return buckets;
   }
 
   function renderKpis(data) {
-    const subs = data.subscribers;
+    // Toutes les inscriptions comptent, y compris celles masquées par le plan gratuit.
+    const timestamps = data.timestamps;
     const now = new Date();
     const today = startOfDay(now).getTime();
     const yesterday = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)).getTime();
@@ -56,15 +57,15 @@
     const prevWeekStart = weekStart - 7 * DAY;
 
     let nToday = 0, nYesterday = 0, nWeek = 0, nPrevWeek = 0;
-    for (const s of subs) {
-      if (s.createdAt >= today) nToday++;
-      else if (s.createdAt >= yesterday) nYesterday++;
-      if (s.createdAt >= weekStart) nWeek++;
-      else if (s.createdAt >= prevWeekStart) nPrevWeek++;
+    for (const t of timestamps) {
+      if (t >= today) nToday++;
+      else if (t >= yesterday) nYesterday++;
+      if (t >= weekStart) nWeek++;
+      else if (t >= prevWeekStart) nPrevWeek++;
     }
 
     $('kpi-total').textContent = fmt.format(data.total);
-    $('kpi-since').textContent = `depuis le ${fmtDate.format(new Date(data.list.createdAt))}`;
+    $('kpi-since').textContent = `depuis le ${fmtDate.format(new Date(data.list.createdAt))}${data.hidden ? ` · dont ${fmt.format(data.hidden)} masqués` : ''}`;
     $('kpi-today').textContent = fmt.format(nToday);
     $('kpi-today-foot').textContent = `hier : ${fmt.format(nYesterday)}`;
     $('kpi-week').textContent = fmt.format(nWeek);
@@ -106,7 +107,7 @@
   function renderChart() {
     if (!state.data) return;
     const container = $('chart');
-    const buckets = dailyCounts(state.data.subscribers, state.range);
+    const buckets = dailyCounts(state.data.timestamps, state.range);
     const totalInRange = buckets.reduce((a, b) => a + b.count, 0);
     $('chart-sub').textContent = `${plural(totalInRange, 'inscription', 'inscriptions')} sur les ${state.range} derniers jours`;
     container.setAttribute('aria-label', `Graphique en barres : ${plural(totalInRange, 'inscription', 'inscriptions')} sur les ${state.range} derniers jours`);
@@ -199,14 +200,15 @@
   const ICON_TRASH = '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
 
   function renderRows() {
-    const { subscribers, total } = state.data;
+    const { subscribers, total, hidden, plan } = state.data;
+    renderLocked(hidden, plan);
     const q = state.query.trim().toLowerCase();
     const filtered = q ? subscribers.filter((s) => s.email.includes(q)) : subscribers;
     const visible = filtered.slice(0, state.shown);
 
     $('list-sub').textContent = q
       ? `${plural(filtered.length, 'résultat', 'résultats')} sur ${fmt.format(total)}`
-      : `${plural(total, 'personne inscrite', 'personnes inscrites')}, du plus récent au plus ancien`;
+      : `${plural(total, 'personne inscrite', 'personnes inscrites')}, du plus récent au plus ancien${hidden ? ` · ${fmt.format(subscribers.length)} ${subscribers.length > 1 ? 'visibles' : 'visible'}` : ''}`;
 
     $('rows').replaceChildren(
       ...visible.map((s) => {
@@ -228,7 +230,8 @@
     );
 
     const empty = $('empty');
-    empty.hidden = filtered.length > 0;
+    // Si tous les inscrits de la liste sont masqués, le bandeau suffit.
+    empty.hidden = filtered.length > 0 || (!q && hidden > 0);
     if (!filtered.length) {
       empty.replaceChildren(
         el('div', { className: 'ico', innerHTML: q
@@ -244,6 +247,22 @@
       }
     }
     $('more').hidden = filtered.length <= state.shown;
+  }
+
+  /** Bandeau du plan gratuit : les inscrits les plus récents au-delà du quota sont masqués. */
+  function renderLocked(hidden, plan) {
+    const box = $('locked');
+    box.hidden = !hidden;
+    if (!hidden) return;
+    box.replaceChildren(
+      el('div', { className: 'locked-rows', ariaHidden: 'true' }, ...Array.from({ length: Math.min(hidden, 3) }, () => el('span'))),
+      el('div', { className: 'locked-body' },
+        el('span', { className: 'locked-ico', innerHTML: '<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' }),
+        el('div', {},
+          el('strong', { textContent: plural(hidden, 'inscrit récent masqué', 'inscrits récents masqués') }),
+          el('p', { textContent: `Votre plan gratuit affiche les ${plan.limit} premiers inscrits de votre compte. Les suivants sont bien enregistrés : passez Pro pour les voir et les exporter.` })),
+        upgradeButton(plan, 'Débloquer · 9 €/mois'))
+    );
   }
 
   // --- Chargement & actions -------------------------------------------------
@@ -272,7 +291,7 @@
   async function load({ first = false } = {}) {
     try {
       const data = await api(API);
-      const signature = `${data.total}:${data.subscribers[0]?.id}:${data.list.title}:${data.list.description}`;
+      const signature = `${data.total}:${data.hidden}:${data.subscribers[0]?.id}:${data.list.title}:${data.list.description}`;
       if (!first && signature === state.signature) return;
       const ids = new Set(data.subscribers.map((s) => s.id));
       state.newIds = state.seenIds ? new Set([...ids].filter((id) => !state.seenIds.has(id))) : new Set();

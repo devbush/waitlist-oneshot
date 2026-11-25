@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, scrypt, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes, scrypt, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import { readFile, stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
@@ -17,6 +17,19 @@ const LIMITS = { title: 80, description: 600, email: 254, passwordMin: 8, passwo
 const SESSION_COOKIE = 'wl_session';
 const SESSION_TTL = 30 * 86_400_000; // 30 jours
 const SESSION_RENEW = 15 * 86_400_000; // prolongée si elle expire dans moins de 15 jours
+
+// Facturation : gratuit jusqu'à FREE_LIMIT inscrits (tous les comptes confondus), Pro illimité.
+const FREE_LIMIT = 100;
+const STRIPE = {
+  secretKey: process.env.STRIPE_SECRET_KEY || '',
+  priceId: process.env.STRIPE_PRICE_ID || '',
+  webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+  apiBase: (process.env.STRIPE_API_BASE || 'https://api.stripe.com').replace(/\/+$/, ''),
+};
+const BILLING_ENABLED = Boolean(STRIPE.secretKey && STRIPE.priceId && STRIPE.webhookSecret);
+const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
+// Statuts Stripe qui donnent accès au plan Pro (past_due : Stripe retente le paiement).
+const ACTIVE_STATUSES = new Set(['active', 'trialing', 'past_due']);
 
 // ---------------------------------------------------------------------------
 // Base de données
@@ -40,6 +53,19 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `);
+
+// Colonnes d'abonnement (ajoutées si la base vient d'une version précédente).
+const userColumns = new Set(db.prepare("SELECT name FROM pragma_table_info('users')").all().map((c) => c.name));
+for (const [name, type] of [
+  ['stripe_customer_id', 'TEXT'],
+  ['stripe_subscription_id', 'TEXT'],
+  ['subscription_status', 'TEXT'],
+  ['current_period_end', 'INTEGER'],
+  ['cancel_at_period_end', 'INTEGER NOT NULL DEFAULT 0'],
+]) {
+  if (!userColumns.has(name)) db.exec(`ALTER TABLE users ADD COLUMN ${name} ${type}`);
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_customer ON users(stripe_customer_id)');
 
 // Migration depuis la version sans comptes (colonne admin_token, pas de propriétaire).
 // Les anciennes listes sont conservées sans propriétaire : elles restent publiques mais
@@ -95,6 +121,17 @@ const q = {
   renewSession: db.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   purgeSessions: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
+
+  // Abonnements
+  userById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  userByCustomer: db.prepare('SELECT * FROM users WHERE stripe_customer_id = ?'),
+  setCustomer: db.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?'),
+  setSubscription: db.prepare(`
+    UPDATE users SET stripe_subscription_id = ?, subscription_status = ?, current_period_end = ?, cancel_at_period_end = ?
+    WHERE id = ?`),
+  usage: db.prepare('SELECT COUNT(*) AS n FROM subscribers s JOIN lists l ON l.id = s.list_id WHERE l.user_id = ?'),
+  // Id du N-ième inscrit du compte (ordre d'arrivée, toutes listes confondues).
+  nthSubscriber: db.prepare('SELECT s.id FROM subscribers s JOIN lists l ON l.id = s.list_id WHERE l.user_id = ? ORDER BY s.id LIMIT 1 OFFSET ?'),
 
   // Listes
   insertList: db.prepare('INSERT INTO lists (user_id, slug, title, description, created_at) VALUES (?, ?, ?, ?, ?)'),
@@ -198,7 +235,12 @@ function isHttps(req) {
   return Boolean(req.socket.encrypted) || (TRUST_PROXY && String(req.headers['x-forwarded-proto'] || '').startsWith('https'));
 }
 
-function readBody(req, limit = 16 * 1024) {
+async function readBody(req, limit = 16 * 1024) {
+  return (await readRawBody(req, limit)).toString('utf8');
+}
+
+/** Corps brut, octet pour octet (nécessaire pour vérifier la signature des webhooks Stripe). */
+function readRawBody(req, limit) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -208,7 +250,7 @@ function readBody(req, limit = 16 * 1024) {
       if (size > limit) tooBig = true;
       else chunks.push(chunk);
     });
-    req.on('end', () => (tooBig ? reject(new HttpError(413, 'Requête trop volumineuse.')) : resolve(Buffer.concat(chunks).toString('utf8'))));
+    req.on('end', () => (tooBig ? reject(new HttpError(413, 'Requête trop volumineuse.')) : resolve(Buffer.concat(chunks))));
     req.on('error', reject);
   });
 }
@@ -403,14 +445,207 @@ function subscribe(list, body) {
   return { ok: true, position, already: result.changes === 0, total: countFor(list.id) };
 }
 
-function listPayload(list) {
+/**
+ * Plan de l'utilisateur. En gratuit, seuls les FREE_LIMIT premiers inscrits du compte
+ * (ordre d'arrivée, toutes listes confondues) sont visibles ; les suivants sont enregistrés
+ * mais masqués jusqu'au passage en Pro.
+ */
+function planFor(userId) {
+  const user = q.userById.get(userId);
+  const pro = ACTIVE_STATUSES.has(user.subscription_status);
+  const used = Number(q.usage.get(userId).n);
+  let visibleUpTo = Infinity;
+  if (!pro) {
+    const nth = q.nthSubscriber.get(userId, FREE_LIMIT - 1);
+    if (nth) visibleUpTo = Number(nth.id);
+  }
+  return {
+    visibleUpTo,
+    info: {
+      plan: pro ? 'pro' : 'free',
+      limit: pro ? null : FREE_LIMIT,
+      used,
+      hidden: pro ? 0 : Math.max(0, used - FREE_LIMIT),
+      status: user.subscription_status || null,
+      periodEnd: user.current_period_end ? Number(user.current_period_end) : null,
+      cancelAtPeriodEnd: Boolean(user.cancel_at_period_end),
+      hasCustomer: Boolean(user.stripe_customer_id),
+      billingEnabled: BILLING_ENABLED,
+    },
+  };
+}
+
+function listPayload(list, plan) {
   const rows = q.subs.all(list.id);
   const total = rows.length;
+  const all = rows.map((r, i) => ({ id: Number(r.id), email: r.email, createdAt: Number(r.created_at), position: total - i }));
+  const visible = all.filter((s) => s.id <= plan.visibleUpTo);
   return {
     list: { title: list.title, description: list.description, slug: list.slug, createdAt: list.created_at },
     total,
-    subscribers: rows.map((r, i) => ({ id: Number(r.id), email: r.email, createdAt: Number(r.created_at), position: total - i })),
+    hidden: total - visible.length,
+    // Dates de toutes les inscriptions (masquées comprises) pour les statistiques et le graphique.
+    timestamps: all.map((s) => s.createdAt),
+    subscribers: visible,
+    plan: plan.info,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Stripe (sans SDK : appels HTTP directs à l'API)
+// ---------------------------------------------------------------------------
+function formEncode(obj, prefix = '') {
+  const out = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null) continue;
+    const key = prefix ? `${prefix}[${k}]` : k;
+    if (typeof v === 'object') out.push(formEncode(v, key));
+    else out.push(`${encodeURIComponent(key)}=${encodeURIComponent(v)}`);
+  }
+  return out.filter(Boolean).join('&');
+}
+
+async function stripeApi(method, path, params, { idempotencyKey } = {}) {
+  let res;
+  try {
+    res = await fetch(`${STRIPE.apiBase}/v1/${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${STRIPE.secretKey}`,
+        ...(params ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      },
+      body: params ? formEncode(params) : undefined,
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    console.error(`Stripe ${method} ${path} : ${err.message}`);
+    throw new HttpError(502, 'Le service de paiement est injoignable. Réessayez dans un instant.');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error(`Stripe ${method} ${path} : ${res.status} ${data.error?.message || ''}`);
+    throw new HttpError(502, 'Le service de paiement a refusé la demande. Réessayez dans un instant.');
+  }
+  return data;
+}
+
+function requireBilling() {
+  if (!BILLING_ENABLED) throw new HttpError(503, 'Les paiements ne sont pas encore configurés sur ce serveur.');
+}
+
+function appUrl(req) {
+  return APP_URL || `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
+}
+
+/** Retourne le client Stripe de l'utilisateur, en le créant au besoin. */
+async function ensureCustomer(userId) {
+  const user = q.userById.get(userId);
+  if (user.stripe_customer_id) return user.stripe_customer_id;
+  const customer = await stripeApi(
+    'POST',
+    'customers',
+    { email: user.email, metadata: { user_id: user.id } },
+    // Évite de créer deux clients si l'utilisateur clique deux fois.
+    { idempotencyKey: `customer-${user.id}-${user.created_at}` }
+  );
+  q.setCustomer.run(customer.id, user.id);
+  return customer.id;
+}
+
+async function createCheckout(req, user) {
+  requireBilling();
+  if (planFor(user.id).info.plan === 'pro') throw new HttpError(409, 'Vous êtes déjà sur le plan Pro.');
+  const customer = await ensureCustomer(user.id);
+  const base = appUrl(req);
+  const session = await stripeApi('POST', 'checkout/sessions', {
+    mode: 'subscription',
+    customer,
+    client_reference_id: user.id,
+    line_items: [{ price: STRIPE.priceId, quantity: 1 }],
+    subscription_data: { metadata: { user_id: user.id } },
+    allow_promotion_codes: 'true',
+    locale: 'fr',
+    success_url: `${base}/app?billing=success`,
+    cancel_url: `${base}/app?billing=cancel`,
+  });
+  return { url: session.url };
+}
+
+async function createPortal(req, user) {
+  requireBilling();
+  const { stripe_customer_id: customer } = q.userById.get(user.id);
+  if (!customer) throw new HttpError(400, 'Aucun abonnement à gérer.');
+  const session = await stripeApi('POST', 'billing_portal/sessions', { customer, return_url: `${appUrl(req)}/app` });
+  return { url: session.url };
+}
+
+/** Vérifie l'en-tête Stripe-Signature (HMAC SHA-256, tolérance de 5 minutes). */
+export function verifyStripeSignature(payload, header, secret, now = Date.now()) {
+  let timestamp = 0;
+  const signatures = [];
+  for (const part of String(header || '').split(',')) {
+    const [k, v] = part.split('=');
+    if (k === 't') timestamp = Number(v);
+    else if (k === 'v1' && v) signatures.push(v);
+  }
+  if (!timestamp || !signatures.length) return false;
+  if (Math.abs(now / 1000 - timestamp) > 300) return false;
+  const expected = createHmac('sha256', secret).update(`${timestamp}.`).update(payload).digest();
+  return signatures.some((sig) => {
+    const given = Buffer.from(sig, 'hex');
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+}
+
+/**
+ * Relit l'abonnement chez Stripe (source de vérité) et met à jour l'utilisateur.
+ * Relire plutôt que se fier au contenu de l'événement rend le traitement insensible
+ * à l'ordre d'arrivée et aux doublons de webhooks.
+ */
+async function syncSubscription(subscriptionId, userIdHint) {
+  const sub = await stripeApi('GET', `subscriptions/${encodeURIComponent(subscriptionId)}`);
+  let user = q.userByCustomer.get(sub.customer);
+  if (!user) {
+    const candidate = q.userById.get(Number(userIdHint || sub.metadata?.user_id) || 0);
+    if (candidate && !candidate.stripe_customer_id) {
+      q.setCustomer.run(sub.customer, candidate.id);
+      user = q.userById.get(candidate.id);
+    }
+  }
+  if (!user) {
+    console.warn(`Stripe : abonnement ${sub.id} sans utilisateur correspondant`);
+    return;
+  }
+  // Un ancien abonnement terminé ne doit pas écraser un abonnement actif plus récent.
+  if (
+    user.stripe_subscription_id &&
+    user.stripe_subscription_id !== sub.id &&
+    ACTIVE_STATUSES.has(user.subscription_status) &&
+    !ACTIVE_STATUSES.has(sub.status)
+  ) return;
+
+  // Selon la version de l'API, la fin de période est sur l'abonnement ou sur ses lignes.
+  const periodEnd = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end ?? null;
+  const cancelAt = sub.cancel_at ?? (sub.cancel_at_period_end ? periodEnd : null);
+  const end = cancelAt ?? periodEnd;
+  q.setSubscription.run(sub.id, sub.status, end ? end * 1000 : null, cancelAt && sub.status !== 'canceled' ? 1 : 0, user.id);
+}
+
+async function handleStripeEvent(event) {
+  const object = event.data?.object || {};
+  switch (event.type) {
+    case 'checkout.session.completed':
+      if (object.mode === 'subscription' && object.subscription) await syncSubscription(object.subscription, object.client_reference_id);
+      break;
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted':
+      await syncSubscription(object.id);
+      break;
+    default:
+      break; // événement non utilisé
+  }
 }
 
 function requireUser(user) {
@@ -560,6 +795,24 @@ async function handle(req, res) {
     }
   }
 
+  // Webhook Stripe : authentifié par signature, pas par cookie ni par Origin.
+  if (pathname === '/stripe/webhook' && method === 'POST') {
+    if (!BILLING_ENABLED) throw new HttpError(404, 'Introuvable.');
+    const payload = await readRawBody(req, 1024 * 1024);
+    if (!verifyStripeSignature(payload, req.headers['stripe-signature'], STRIPE.webhookSecret)) {
+      return sendJson(res, 400, { error: 'Signature invalide.' });
+    }
+    let event;
+    try {
+      event = JSON.parse(payload.toString('utf8'));
+    } catch {
+      return sendJson(res, 400, { error: 'JSON invalide.' });
+    }
+    // En cas d'erreur (Stripe injoignable…), la réponse 5xx fait réessayer Stripe plus tard.
+    await handleStripeEvent(event);
+    return sendJson(res, 200, { received: true });
+  }
+
   // --- API -----------------------------------------------------------------
   if (pathname.startsWith('/api/') && method !== 'GET') checkOrigin(req);
 
@@ -585,6 +838,21 @@ async function handle(req, res) {
     return sendJson(res, 200, { user: user && { email: user.email } });
   }
 
+  // Facturation
+  if (pathname === '/api/billing' && method === 'GET') {
+    return sendJson(res, 200, { plan: planFor(requireUser(user).id).info });
+  }
+  if (pathname === '/api/billing/checkout' && method === 'POST') {
+    requireUser(user);
+    rateLimit(`checkout:${user.id}`, 10, 10 * 60_000);
+    return sendJson(res, 200, await createCheckout(req, user));
+  }
+  if (pathname === '/api/billing/portal' && method === 'POST') {
+    requireUser(user);
+    rateLimit(`portal:${user.id}`, 10, 10 * 60_000);
+    return sendJson(res, 200, await createPortal(req, user));
+  }
+
   // Inscription publique à une liste
   if ((m = pathname.match(/^\/api\/w\/([a-z0-9-]+)\/subscribe$/)) && method === 'POST') {
     rateLimit(`sub:${ip}`, 20, 60_000);
@@ -604,7 +872,7 @@ async function handle(req, res) {
         total: Number(l.total),
         week: Number(l.week),
       }));
-      return sendJson(res, 200, { user: { email: user.email }, lists });
+      return sendJson(res, 200, { user: { email: user.email }, plan: planFor(user.id).info, lists });
     }
     if (method === 'POST') {
       rateLimit(`create:${user.id}`, 30, 60 * 60_000);
@@ -614,14 +882,14 @@ async function handle(req, res) {
 
   if ((m = pathname.match(/^\/api\/lists\/([a-z0-9-]+)$/))) {
     const list = requireOwnedList(requireUser(user), m[1]);
-    if (method === 'GET') return sendJson(res, 200, { user: { email: user.email }, ...listPayload(list) });
+    if (method === 'GET') return sendJson(res, 200, { user: { email: user.email }, ...listPayload(list, planFor(user.id)) });
     if (method === 'PATCH') {
       const body = await parseBody(req);
       const title = body.title === undefined ? list.title : cleanText(body.title, LIMITS.title);
       const description = body.description === undefined ? list.description : cleanText(body.description, LIMITS.description);
       if (!title) throw new HttpError(400, 'Le titre est obligatoire.');
       q.updateList.run(title, description, list.id);
-      return sendJson(res, 200, { user: { email: user.email }, ...listPayload(q.listBySlug.get(list.slug)) });
+      return sendJson(res, 200, { user: { email: user.email }, ...listPayload(q.listBySlug.get(list.slug), planFor(user.id)) });
     }
     if (method === 'DELETE') {
       q.deleteList.run(list.id);
@@ -631,7 +899,9 @@ async function handle(req, res) {
 
   if ((m = pathname.match(/^\/api\/lists\/([a-z0-9-]+)\/subscribers\/(\d+)$/)) && method === 'DELETE') {
     const list = requireOwnedList(requireUser(user), m[1]);
-    const { changes } = q.deleteSub.run(Number(m[2]), list.id);
+    const subId = Number(m[2]);
+    if (subId > planFor(user.id).visibleUpTo) throw new HttpError(404, 'Inscrit introuvable.');
+    const { changes } = q.deleteSub.run(subId, list.id);
     if (!changes) throw new HttpError(404, 'Inscrit introuvable.');
     return sendJson(res, 200, { ok: true });
   }
@@ -639,7 +909,8 @@ async function handle(req, res) {
   if ((m = pathname.match(/^\/api\/lists\/([a-z0-9-]+)\/export\.csv$/)) && method === 'GET') {
     const list = requireOwnedList(requireUser(user), m[1]);
     const lines = ['position,email,date_inscription'];
-    for (const s of listPayload(list).subscribers.reverse()) {
+    // En gratuit, l'export ne contient que les inscrits visibles.
+    for (const s of listPayload(list, planFor(user.id)).subscribers.reverse()) {
       lines.push([s.position, csvCell(s.email), new Date(s.createdAt).toISOString()].join(','));
     }
     return send(res, 200, '﻿' + lines.join('\r\n') + '\r\n', {
