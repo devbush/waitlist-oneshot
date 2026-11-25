@@ -45,13 +45,13 @@
   /* ---------- Recherche */
   const search = document.getElementById('search');
   if (search) {
-    const rows = [...document.querySelectorAll('tbody tr[data-email]')];
+    const rows = [...document.querySelectorAll('.subs tbody tr')]; // lignes verrouillées incluses (sans email : masquées pendant une recherche)
     const noMatch = document.getElementById('no-match');
     search.addEventListener('input', () => {
       const q = search.value.trim().toLowerCase();
       let shown = 0;
       for (const r of rows) {
-        const ok = !q || r.dataset.email.includes(q);
+        const ok = !q || (r.dataset.email || '').includes(q);
         r.hidden = !ok;
         if (ok) shown++;
       }

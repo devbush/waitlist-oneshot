@@ -2,6 +2,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { FREE_LIMIT, isPro } from './plans.js';
+
+export { FREE_LIMIT, isPro };
 
 const dbPath = process.env.DB_PATH || path.resolve('data', 'waitlist.db');
 mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -46,16 +49,50 @@ if (!db.prepare('PRAGMA table_info(lists)').all().some((c) => c.name === 'user_i
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_lists_user ON lists(user_id, created_at)');
 
+// Migration : colonnes d'abonnement Stripe sur les comptes.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(users)').all().map((c) => c.name));
+  const add = (name, type) => !cols.has(name) && db.exec(`ALTER TABLE users ADD COLUMN ${name} ${type}`);
+  add('stripe_customer_id', 'TEXT');
+  add('stripe_subscription_id', 'TEXT');
+  add('subscription_status', 'TEXT'); // statut Stripe brut : active, trialing, past_due, canceled…
+  add('current_period_end', 'INTEGER'); // timestamp Unix (secondes)
+  add('cancel_at_period_end', 'INTEGER NOT NULL DEFAULT 0');
+  if (!db.prepare('PRAGMA table_info(subscribers)').all().some((c) => c.name === 'locked')) {
+    // 1 = inscrit reçu au-delà du quota gratuit : email masqué tant que le compte n'est pas Pro.
+    // Fixé à l'inscription, pour qu'on ne puisse pas « faire de la place » en supprimant des inscrits visibles.
+    db.exec('ALTER TABLE subscribers ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_customer ON users(stripe_customer_id)');
+}
+
+
+
 const q = {
   // utilisateurs & sessions
   insertUser: db.prepare('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)'),
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   insertSession: db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)'),
   sessionUser: db.prepare(
-    'SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
+    `SELECT u.id, u.email, u.stripe_customer_id, u.stripe_subscription_id, u.subscription_status,
+            u.current_period_end, u.cancel_at_period_end
+     FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`
   ),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   purgeSessions: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
+
+  // abonnement
+  userById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  userByCustomer: db.prepare('SELECT * FROM users WHERE stripe_customer_id = ?'),
+  setCustomer: db.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?'),
+  setSubscription: db.prepare(
+    'UPDATE users SET stripe_subscription_id = ?, subscription_status = ?, current_period_end = ?, cancel_at_period_end = ? WHERE id = ?'
+  ),
+  unlockAll: db.prepare('UPDATE subscribers SET locked = 0 WHERE locked = 1 AND list_id IN (SELECT id FROM lists WHERE user_id = ?)'),
+  usage: db.prepare(`
+    SELECT COUNT(s.id) AS total, COALESCE(SUM(s.locked), 0) AS locked
+    FROM lists l JOIN subscribers s ON s.list_id = l.id WHERE l.user_id = ?`),
+  listOwner: db.prepare('SELECT u.id, u.subscription_status FROM lists l JOIN users u ON u.id = l.user_id WHERE l.id = ?'),
 
   // listes
   insertList: db.prepare(
@@ -69,6 +106,7 @@ const q = {
   userLists: db.prepare(`
     SELECT l.id, l.slug, l.title, l.created_at,
            COUNT(s.id) AS total,
+           COALESCE(SUM(s.locked), 0) AS locked,
            SUM(CASE WHEN s.created_at >= ? THEN 1 ELSE 0 END) AS week,
            MAX(s.created_at) AS last_at
     FROM lists l LEFT JOIN subscribers s ON s.list_id = l.id
@@ -80,9 +118,9 @@ const q = {
 
   // inscrits
   count: db.prepare('SELECT COUNT(*) AS n FROM subscribers WHERE list_id = ?'),
-  insertSub: db.prepare('INSERT OR IGNORE INTO subscribers (list_id, email, created_at) VALUES (?, ?, ?)'),
+  insertSub: db.prepare('INSERT OR IGNORE INTO subscribers (list_id, email, created_at, locked) VALUES (?, ?, ?, ?)'),
   subs: db.prepare(
-    'SELECT id, email, created_at FROM subscribers WHERE list_id = ? ORDER BY created_at DESC, id DESC'
+    'SELECT id, email, created_at, locked FROM subscribers WHERE list_id = ? ORDER BY created_at DESC, id DESC'
   ),
   deleteSub: db.prepare('DELETE FROM subscribers WHERE id = ? AND list_id = ?'),
 };
@@ -148,5 +186,22 @@ export const deleteSubscriber = (listId, id) => q.deleteSub.run(id, listId);
 
 /** @returns {boolean} true si nouvel inscrit, false s'il était déjà inscrit */
 export function addSubscriber(listId, email) {
-  return q.insertSub.run(listId, email, new Date().toISOString()).changes > 0;
+  // node:sqlite est synchrone : le comptage et l'insertion ne peuvent pas être entrelacés.
+  const owner = q.listOwner.get(listId); // undefined pour une ancienne liste sans propriétaire
+  const locked = owner && !isPro(owner) && q.usage.get(owner.id).total >= FREE_LIMIT ? 1 : 0;
+  return q.insertSub.run(listId, email, new Date().toISOString(), locked).changes > 0;
+}
+
+/* ------------------------------------------------------------- abonnement */
+
+/** @returns {{total:number, locked:number}} inscrits du compte, toutes listes confondues */
+export const getUsage = (userId) => q.usage.get(userId);
+export const getUserById = (id) => q.userById.get(id);
+export const getUserByCustomer = (customerId) => q.userByCustomer.get(customerId);
+export const setStripeCustomer = (userId, customerId) => q.setCustomer.run(customerId, userId);
+
+/** Enregistre l'état d'abonnement ; débloque tous les inscrits quand le compte devient Pro. */
+export function saveSubscription(userId, { id, status, periodEnd, cancelAtPeriodEnd }) {
+  q.setSubscription.run(id, status, periodEnd ?? null, cancelAtPeriodEnd ? 1 : 0, userId);
+  if (isPro({ subscription_status: status })) q.unlockAll.run(userId);
 }

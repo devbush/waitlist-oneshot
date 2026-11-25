@@ -1,3 +1,5 @@
+import { FREE_LIMIT, PRO_PRICE_EUR, isPro } from './plans.js';
+
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 const jsonScript = (o) => JSON.stringify(o).replace(/</g, '\\u003c');
@@ -9,6 +11,10 @@ const aurora = `<div class="aurora" aria-hidden="true"><span></span><span></span
 const fmtDateFallback = (iso) =>
   new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC';
 const fmtDay = (iso) => new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+const lockIcon = `<svg class="lock-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>`;
+const checkIcon = `<svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
+const fmtUnix = (sec) => new Date(sec * 1000).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 const plural = (n, one, many) => (n <= 1 ? one : many); // en français, 0 et 1 sont au singulier
 
@@ -36,6 +42,7 @@ ${scripts.map((s) => `<script src="/static/${s}" defer></script>`).join('\n')}
 function nav(user, { sticky = false } = {}) {
   const right = user
     ? `<a class="nav-link" href="/lists">Mes listes</a>
+       ${isPro(user) ? '<a class="plan-pill pro" href="/billing" title="Gérer mon abonnement">Pro</a>' : '<a class="nav-link" href="/billing">Abonnement</a>'}
        <span class="user-chip" title="${esc(user.email)}"><span class="avatar" aria-hidden="true">${esc(user.email[0].toUpperCase())}</span><span class="user-email">${esc(user.email)}</span></span>
        <form method="post" action="/logout"><button class="btn ghost sm" type="submit">Déconnexion</button></form>`
     : `<a class="nav-link" href="/login">Connexion</a>
@@ -44,6 +51,82 @@ function nav(user, { sticky = false } = {}) {
   <a class="brand" href="${user ? '/lists' : '/'}">${logo}<span>Waitlist</span></a>
   <nav class="nav-right" aria-label="Compte">${right}</nav>
 </header>`;
+}
+
+/* ------------------------------------------------------------ Plans & quota */
+
+/** Jauge du quota gratuit (ou rappel du plan Pro). */
+function usageMeter(user, usage, { cta = true } = {}) {
+  if (isPro(user)) {
+    return `<div class="card usage is-pro">
+      <div class="usage-text">
+        <span class="plan-pill pro">Pro</span>
+        <span><strong>Inscrits illimités</strong> · ${usage.total} ${plural(usage.total, 'inscrit', 'inscrits')} au total</span>
+      </div>
+      ${cta ? '<a class="btn ghost sm" href="/billing">Gérer l’abonnement</a>' : ''}
+    </div>`;
+  }
+  const used = Math.min(usage.total, FREE_LIMIT);
+  const pct = Math.round((used / FREE_LIMIT) * 100);
+  const state = usage.total >= FREE_LIMIT ? 'full' : pct >= 80 ? 'near' : 'ok';
+  const left = FREE_LIMIT - used;
+  const label =
+    state === 'full'
+      ? usage.locked
+        ? `${lockIcon}<span><strong>Quota gratuit atteint</strong> · ${usage.locked} ${plural(usage.locked, 'inscrit verrouillé', 'inscrits verrouillés')}</span>`
+        : `${lockIcon}<span><strong>Quota gratuit atteint</strong> · les prochains inscrits seront verrouillés</span>`
+      : state === 'near'
+        ? `<span class="warn-mark" aria-hidden="true">!</span><span><strong>Plus que ${left} ${plural(left, 'place gratuite', 'places gratuites')}</strong></span>`
+        : `<span><strong>Plan gratuit</strong> · encore ${left} ${plural(left, 'place', 'places')}</span>`;
+  return `<div class="card usage state-${state}">
+    <div class="usage-main">
+      <div class="usage-text">${label}<span class="usage-count">${used} / ${FREE_LIMIT}</span></div>
+      <svg class="meter" width="100%" height="8" role="img" aria-label="${used} inscrits sur ${FREE_LIMIT} inclus dans le plan gratuit">
+        <rect class="meter-track" width="100%" height="8" rx="4"/>
+        ${used ? `<rect class="meter-fill" width="${pct}%" height="8" rx="4"/>` : ''}
+      </svg>
+    </div>
+    ${cta ? `<a class="btn ${state === 'ok' ? 'ghost' : 'primary'} sm" href="/billing">${state === 'full' ? 'Tout débloquer' : 'Passer en Pro'}</a>` : ''}
+  </div>`;
+}
+
+/** Cartes des deux plans (accueil et page Abonnement). */
+function planCards({ user = null, stripeEnabled = true } = {}) {
+  const pro = isPro(user);
+  const freeFeatures = [`${FREE_LIMIT} inscrits inclus`, 'Listes illimitées', 'Page publique & formulaire', 'Dashboard, stats et export CSV'];
+  const proFeatures = ['Inscrits illimités', 'Tout le plan gratuit', 'Déblocage immédiat des inscrits verrouillés', 'Sans engagement, annulable à tout moment'];
+  const features = (items) => `<ul class="plan-features">${items.map((f) => `<li>${checkIcon}${esc(f)}</li>`).join('')}</ul>`;
+
+  let freeCta, proCta;
+  if (!user) {
+    freeCta = '<a class="btn block" href="/signup">Commencer gratuitement</a>';
+    proCta = '<a class="btn primary block" href="/signup">Créer un compte</a>';
+  } else if (pro) {
+    freeCta = '<p class="plan-note">Vous repasserez sur ce plan si vous annulez.</p>';
+    proCta = `<form method="post" action="/billing/portal"><button class="btn block" type="submit">Gérer mon abonnement</button></form>`;
+  } else {
+    freeCta = '<p class="plan-note">Votre plan actuel.</p>';
+    proCta = stripeEnabled
+      ? `<form method="post" action="/billing/checkout"><button class="btn primary block" type="submit">Passer en Pro, ${PRO_PRICE_EUR} €/mois</button></form>`
+      : '<button class="btn primary block" type="button" disabled>Paiement indisponible</button>';
+  }
+  const current = '<span class="plan-current">Plan actuel</span>';
+  return `<div class="plans">
+    <article class="card plan">
+      <header><h3>Gratuit</h3>${user && !pro ? current : ''}</header>
+      <p class="plan-price"><strong>0 €</strong></p>
+      <p class="muted">Pour lancer et valider une idée.</p>
+      ${features(freeFeatures)}
+      ${freeCta}
+    </article>
+    <article class="card plan plan-pro">
+      <header><h3>Pro</h3>${pro ? current : '<span class="plan-badge">Illimité</span>'}</header>
+      <p class="plan-price"><strong>${PRO_PRICE_EUR} €</strong><span>/ mois</span></p>
+      <p class="muted">Pour les lancements qui décollent.</p>
+      ${features(proFeatures)}
+      ${proCta}
+    </article>
+  </div>`;
 }
 
 /* ---------------------------------------------------------------- Accueil */
@@ -82,6 +165,12 @@ ${nav(null)}
       <span class="mini-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
     </div>
   </div>
+
+  <section class="pricing" id="tarifs">
+    <h2>Des tarifs simples</h2>
+    <p class="lead">Gratuit jusqu’à ${FREE_LIMIT} inscrits. Ensuite, ${PRO_PRICE_EUR} € par mois pour des inscrits illimités.</p>
+    ${planCards()}
+  </section>
 </main>`;
   return layout({ title: 'Waitlist · Créez votre liste d’attente', body, bodyClass: 'page-home' });
 }
@@ -124,7 +213,7 @@ ${nav(null)}
 
 /* ----------------------------------------------------------- Mes listes */
 
-export function listsPage({ user, lists, error = '', values = {}, flags = {} }) {
+export function listsPage({ user, usage, lists, error = '', values = {}, flags = {} }) {
   const cards = lists
     .map(
       (l) => `
@@ -135,6 +224,7 @@ export function listsPage({ user, lists, error = '', values = {}, flags = {} }) 
         <div class="list-stats">
           <span><strong>${l.total}</strong> ${plural(l.total, 'inscrit', 'inscrits')}</span>
           ${l.week ? `<span class="trend">+${l.week} cette semaine</span>` : ''}
+          ${l.locked ? `<span class="locked-chip">${lockIcon}${l.locked} ${plural(l.locked, 'verrouillé', 'verrouillés')}</span>` : ''}
         </div>
       </a>
       <div class="list-foot">
@@ -162,6 +252,7 @@ ${nav(user, { sticky: true })}
     </div>
     <a class="btn primary sm jump-new" href="#new">+ Nouvelle liste</a>
   </section>
+  ${usageMeter(user, usage)}
 
   <div class="lists-layout">
     <section>
@@ -257,9 +348,26 @@ export function dashboard({ user, list, subscribers, baseUrl, flags }) {
   const total = subscribers.length;
   const base = `/lists/${esc(list.slug)}`;
 
+  const pro = isPro(user);
+  const lockedCount = subscribers.filter((s) => s.locked).length;
   const rows = subscribers
-    .map(
-      (s, i) => `
+    .map((s, i) =>
+      s.locked
+        ? // Inscrit verrouillé : l'email n'apparaît nulle part dans le HTML (ni texte, ni attribut).
+          `
+      <tr class="locked-row">
+        <td class="num">${total - i}</td>
+        <td class="email"><div class="email-cell"><span class="avatar lock" aria-hidden="true">${lockIcon}</span><span class="email-text masked">••••••••@••••••.••</span><a class="locked-chip" href="/billing">Pro</a></div></td>
+        <td class="date"><time datetime="${esc(s.created_at)}">${esc(fmtDateFallback(s.created_at))}</time></td>
+        <td class="actions">
+          <form method="post" action="${base}/subscribers/${s.id}/delete" data-confirm="Retirer cet inscrit verrouillé de la liste ?">
+            <button class="icon-btn" type="submit" title="Retirer" aria-label="Retirer cet inscrit verrouillé">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>
+            </button>
+          </form>
+        </td>
+      </tr>`
+        : `
       <tr data-email="${esc(s.email)}">
         <td class="num">${total - i}</td>
         <td class="email"><div class="email-cell"><span class="avatar" aria-hidden="true">${esc(s.email[0].toUpperCase())}</span><span class="email-text">${esc(s.email)}</span></div></td>
@@ -274,6 +382,18 @@ export function dashboard({ user, list, subscribers, baseUrl, flags }) {
       </tr>`
     )
     .join('');
+
+  const upsell =
+    lockedCount && !pro
+      ? `<section class="card upsell">
+        <div class="upsell-icon" aria-hidden="true">${lockIcon}</div>
+        <div class="upsell-body">
+          <h2>${lockedCount} ${plural(lockedCount, 'inscrit verrouillé', 'inscrits verrouillés')} sur cette liste</h2>
+          <p>Votre compte a dépassé les ${FREE_LIMIT} inscrits du plan gratuit. Les inscriptions continuent d’arriver, mais leurs emails restent masqués et hors de l’export. Passez en Pro pour tout débloquer.</p>
+        </div>
+        <a class="btn primary" href="/billing">Débloquer, ${PRO_PRICE_EUR} €/mois</a>
+      </section>`
+      : '';
 
   let flash = '';
   if (flags.created) {
@@ -303,6 +423,7 @@ ${nav(user, { sticky: true })}
 <main class="dash">
   ${flash}
   <a class="back" href="/lists"><span aria-hidden="true">←</span> Mes listes</a>
+  ${upsell}
   <section class="dash-head">
     <div>
       <p class="eyebrow">Dashboard</p>
@@ -351,7 +472,7 @@ ${nav(user, { sticky: true })}
       <h2>Inscrits <span class="pill">${total}</span></h2>
       <div class="tools">
         ${total ? `<input type="search" id="search" placeholder="Rechercher un email…" aria-label="Rechercher un email">` : ''}
-        ${total ? `<a class="btn sm" href="${base}/export.csv">Exporter CSV</a>` : ''}
+        ${total > lockedCount ? `<a class="btn sm" href="${base}/export.csv" ${lockedCount ? 'title="Les inscrits verrouillés ne sont pas exportés"' : ''}>Exporter CSV${lockedCount ? ` (${total - lockedCount})` : ''}</a>` : ''}
       </div>
     </header>
     ${
@@ -388,6 +509,53 @@ ${nav(user, { sticky: true })}
     dates: subscribers.map((s) => s.created_at),
   })}</script>`;
   return layout({ title: `${list.title} · Dashboard`, body, bodyClass: 'page-dash', scripts: ['dashboard.js'] });
+}
+
+/* ------------------------------------------------------------- Abonnement */
+
+export function billingPage({ user, usage, notice, stripeEnabled }) {
+  const pro = isPro(user);
+  const notices = {
+    success: ['toast', 'Bienvenue en Pro ! Tous vos inscrits sont débloqués. 🎉'],
+    pending: ['toast warn', 'Paiement reçu. L’activation de votre plan Pro est en cours : rechargez la page dans quelques secondes.'],
+    cancel: ['toast neutral', 'Paiement annulé : rien n’a été facturé.'],
+    error: ['toast error', stripeEnabled ? 'Impossible de joindre le service de paiement pour le moment. Réessayez dans un instant.' : 'Le paiement n’est pas encore configuré sur ce serveur.'],
+  };
+  const n = notices[notice === 'success' && !pro ? 'pending' : notice];
+  const flash = n ? `<p class="${n[0]}" role="status">${esc(n[1])}</p>` : '';
+
+  let status = '';
+  if (pro) {
+    const end = user.current_period_end ? fmtUnix(user.current_period_end) : null;
+    if (user.subscription_status === 'past_due') {
+      status = `<p class="sub-status warn"><span class="warn-mark" aria-hidden="true">!</span> Le dernier paiement a échoué. Stripe va réessayer ; mettez à jour votre carte pour garder le plan Pro.</p>`;
+    } else if (user.cancel_at_period_end) {
+      status = `<p class="sub-status">Abonnement annulé : il reste actif${end ? ` jusqu’au <strong>${esc(end)}</strong>` : ''}, puis vous repasserez au plan gratuit. Vos inscrits actuels resteront accessibles.</p>`;
+    } else if (end) {
+      status = `<p class="sub-status">Prochain renouvellement le <strong>${esc(end)}</strong>.</p>`;
+    }
+  }
+
+  const fine = pro
+    ? 'Paiement sécurisé par Stripe. Factures, carte bancaire et résiliation se gèrent depuis le portail Stripe.'
+    : 'Paiement sécurisé par Stripe. Sans engagement : annulez quand vous voulez, vous gardez le Pro jusqu’à la fin du mois payé.';
+
+  const body = `
+${nav(user, { sticky: true })}
+<main class="dash billing">
+  ${flash}
+  <section class="dash-head">
+    <div>
+      <p class="eyebrow">Compte</p>
+      <h1>Abonnement</h1>
+    </div>
+  </section>
+  ${usageMeter(user, usage, { cta: false })}
+  ${status}
+  ${planCards({ user, stripeEnabled })}
+  <p class="fine-print">${fine}</p>
+</main>`;
+  return layout({ title: 'Abonnement · Waitlist', body, bodyClass: 'page-dash' });
 }
 
 /* ------------------------------------------------------------------ 404 */

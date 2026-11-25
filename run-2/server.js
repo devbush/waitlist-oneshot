@@ -5,11 +5,14 @@ import { fileURLToPath } from 'node:url';
 import * as db from './src/db.js';
 import * as auth from './src/auth.js';
 import * as views from './src/views.js';
+import * as stripe from './src/stripe.js';
+import * as billing from './src/billing.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const MAX_BODY = 16 * 1024;
+const MAX_WEBHOOK_BODY = 512 * 1024;
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
@@ -21,7 +24,7 @@ const MIME = {
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self' https://checkout.stripe.com https://billing.stripe.com; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
 };
@@ -43,29 +46,32 @@ const redirect = (res, location, extra = {}) => {
   res.end();
 };
 
-function readBody(req) {
+/** Corps brut (Buffer) — nécessaire tel quel pour vérifier la signature des webhooks Stripe. */
+function readRaw(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         reject(Object.assign(new Error('Payload too large'), { status: 413 }));
         req.destroy();
       } else chunks.push(c);
     });
-    req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8');
-      const type = req.headers['content-type'] || '';
-      try {
-        if (type.includes('application/json')) resolve(raw ? JSON.parse(raw) : {});
-        else resolve(Object.fromEntries(new URLSearchParams(raw)));
-      } catch {
-        reject(Object.assign(new Error('Bad request'), { status: 400 }));
-      }
-    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+async function readBody(req) {
+  const raw = (await readRaw(req)).toString('utf8');
+  const type = req.headers['content-type'] || '';
+  try {
+    if (type.includes('application/json')) return raw ? JSON.parse(raw) : {};
+    return Object.fromEntries(new URLSearchParams(raw));
+  } catch {
+    throw Object.assign(new Error('Bad request'), { status: 400 });
+  }
 }
 
 const wantsJson = (req) => (req.headers.accept || '').includes('application/json');
@@ -168,6 +174,20 @@ async function handle(req, res) {
     }
   }
 
+  /* ---------- Webhook Stripe (authentifié par signature, pas par cookie) */
+  if (p === '/stripe/webhook' && m === 'POST') {
+    const raw = await readRaw(req, MAX_WEBHOOK_BODY);
+    const event = stripe.verifyWebhook(raw, req.headers['stripe-signature']);
+    if (!event) return json(res, 400, { error: 'invalid_signature' });
+    try {
+      await billing.handleEvent(event);
+    } catch (err) {
+      console.error(`Webhook Stripe ${event.type} (${event.id}) en échec :`, err.message);
+      return json(res, 500, { error: 'processing_failed' }); // Stripe réessaiera
+    }
+    return json(res, 200, { received: true });
+  }
+
   // Toutes les autres actions POST exigent une requête de même origine.
   if (m === 'POST' && !sameOrigin(req)) return html(res, views.notFound('Requête refusée.', '403'), 403);
 
@@ -222,7 +242,7 @@ async function handle(req, res) {
     if (!user) return loginRedirect();
     if (m === 'GET') {
       const flags = { deleted: url.searchParams.has('deleted'), claimed: url.searchParams.has('claimed') };
-      return html(res, views.listsPage({ user, lists: db.getUserLists(user.id), flags }));
+      return html(res, views.listsPage({ user, usage: db.getUsage(user.id), lists: db.getUserLists(user.id), flags }));
     }
     if (m === 'POST') {
       const body = await readBody(req);
@@ -231,7 +251,7 @@ async function handle(req, res) {
       if (!title) {
         return html(
           res,
-          views.listsPage({ user, lists: db.getUserLists(user.id), error: 'Donnez un titre à votre projet.', values: { title, description } }),
+          views.listsPage({ user, usage: db.getUsage(user.id), lists: db.getUserLists(user.id), error: 'Donnez un titre à votre projet.', values: { title, description } }),
           400
         );
       }
@@ -255,7 +275,7 @@ async function handle(req, res) {
     }
 
     if (sub === '/export.csv' && m === 'GET') {
-      const rows = db.getSubscribers(list.id).reverse();
+      const rows = db.getSubscribers(list.id).filter((r) => !r.locked).reverse(); // jamais les emails verrouillés
       const csv = ['email,inscrit_le', ...rows.map((r) => `${csvCell(r.email)},${csvCell(r.created_at)}`)].join('\r\n');
       return send(res, 200, '﻿' + csv, 'text/csv; charset=utf-8', {
         'Content-Disposition': `attachment; filename="inscrits-${list.slug}.csv"`,
@@ -279,6 +299,54 @@ async function handle(req, res) {
     if ((match = sub.match(/^\/subscribers\/(\d+)\/delete$/)) && m === 'POST') {
       db.deleteSubscriber(list.id, Number(match[1]));
       return redirect(res, `${self}?removed=1`);
+    }
+  }
+
+  /* ---------- Abonnement */
+  if (p === '/billing' && m === 'GET') {
+    if (!user) return loginRedirect();
+    let current = user;
+    let notice = url.searchParams.get('checkout'); // success | cancel
+    const sessionId = url.searchParams.get('session_id');
+    if (notice === 'success' && sessionId && stripe.enabled() && !db.isPro(user)) {
+      try {
+        current = (await billing.syncFromCheckout(user, sessionId)) || user;
+      } catch (err) {
+        console.error('Synchronisation après Checkout impossible :', err.message);
+      }
+      if (!db.isPro(current)) notice = 'pending'; // le webhook finira l'activation
+    }
+    if (url.searchParams.has('error')) notice = 'error';
+    return html(res, views.billingPage({ user: current, usage: db.getUsage(user.id), notice, stripeEnabled: stripe.enabled() }));
+  }
+
+  if (p === '/billing/checkout' && m === 'POST') {
+    if (!user) return loginRedirect();
+    if (!stripe.enabled()) return redirect(res, '/billing?error=1');
+    try {
+      const customerId = await billing.ensureCustomer(user);
+      // Déjà abonné : on envoie vers le portail plutôt que de créer un 2e abonnement.
+      if (db.isPro(user)) {
+        const portal = await stripe.createPortalSession({ customerId, returnUrl: `${baseUrl(req)}/billing` });
+        return redirect(res, portal.url);
+      }
+      const session = await stripe.createCheckoutSession({ user, customerId, baseUrl: baseUrl(req) });
+      return redirect(res, session.url);
+    } catch (err) {
+      console.error('Création de la session Checkout impossible :', err.message);
+      return redirect(res, '/billing?error=1');
+    }
+  }
+
+  if (p === '/billing/portal' && m === 'POST') {
+    if (!user) return loginRedirect();
+    if (!stripe.enabled() || !user.stripe_customer_id) return redirect(res, '/billing?error=1');
+    try {
+      const portal = await stripe.createPortalSession({ customerId: user.stripe_customer_id, returnUrl: `${baseUrl(req)}/billing` });
+      return redirect(res, portal.url);
+    } catch (err) {
+      console.error('Création de la session du portail impossible :', err.message);
+      return redirect(res, '/billing?error=1');
     }
   }
 
@@ -307,4 +375,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`✦ Waitlist prête sur http://localhost:${PORT}`);
+  if (!stripe.enabled()) console.log('  (paiement désactivé : définissez STRIPE_SECRET_KEY pour activer le plan Pro)');
+  else if (!process.env.STRIPE_WEBHOOK_SECRET) console.warn('  ⚠ STRIPE_WEBHOOK_SECRET manquant : les webhooks Stripe seront refusés.');
 });
