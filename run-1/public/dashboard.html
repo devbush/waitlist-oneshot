@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Dashboard — Waitlist</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/common.js" defer></script>
+  <script src="/static/dashboard.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h7M3 11.5h4"/></svg></span>
+      Waitlist
+    </a>
+    <span class="crumb"><span aria-hidden="true">/</span><strong id="crumb-title">Dashboard</strong></span>
+    <span class="spacer"></span>
+    <span class="live" title="Actualisation automatique toutes les 15 secondes"><span class="pulse" aria-hidden="true"></span>En direct</span>
+  </header>
+
+  <main class="container">
+    <div class="state" id="state"><p>Chargement…</p></div>
+
+    <div class="dash" id="dash" hidden>
+      <section class="dash-head">
+        <div>
+          <h1 id="title"></h1>
+          <p class="sub">Page publique : <a id="public-link" target="_blank" rel="noopener"></a></p>
+        </div>
+        <div class="dash-actions">
+          <button class="btn btn-ghost" type="button" id="copy-public">
+            <svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            Copier le lien
+          </button>
+          <a class="btn btn-primary" id="open-public" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+            Voir la page
+          </a>
+        </div>
+      </section>
+
+      <section class="kpis">
+        <div class="card kpi kpi-hero">
+          <span class="kpi-label">Inscrits au total</span>
+          <span class="kpi-value" id="kpi-total">0</span>
+          <span class="kpi-foot" id="kpi-since"></span>
+        </div>
+        <div class="card kpi">
+          <span class="kpi-label">Aujourd’hui</span>
+          <span class="kpi-value" id="kpi-today">0</span>
+          <span class="kpi-foot" id="kpi-today-foot"></span>
+        </div>
+        <div class="card kpi">
+          <span class="kpi-label">7 derniers jours</span>
+          <span class="kpi-value" id="kpi-week">0</span>
+          <span class="kpi-foot" id="kpi-week-foot"></span>
+        </div>
+      </section>
+
+      <section class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2>Inscriptions par jour</h2>
+            <span class="muted" id="chart-sub"></span>
+          </div>
+          <div class="seg" role="group" aria-label="Période">
+            <button type="button" data-range="14" aria-pressed="false">14 j</button>
+            <button type="button" data-range="30" aria-pressed="true">30 j</button>
+            <button type="button" data-range="90" aria-pressed="false">90 j</button>
+          </div>
+        </div>
+        <div class="chart" id="chart" role="img"></div>
+        <table class="sr-only" id="chart-table"><caption>Inscriptions par jour</caption><thead><tr><th>Jour</th><th>Inscriptions</th></tr></thead><tbody></tbody></table>
+      </section>
+
+      <section class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2>Inscrits</h2>
+            <span class="muted" id="list-sub"></span>
+          </div>
+          <div class="toolbar">
+            <label class="search">
+              <span class="sr-only">Rechercher un email</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+              <input class="input" type="search" id="search" placeholder="Rechercher un email…" autocomplete="off">
+            </label>
+            <a class="btn btn-ghost btn-sm" id="export" download>
+              <svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+              Exporter CSV
+            </a>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th class="num">#</th><th>Email</th><th>Inscription</th><th class="act"><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="empty" hidden></div>
+        <div class="more" id="more" hidden><button class="btn btn-ghost btn-sm" type="button">Afficher plus</button></div>
+      </section>
+
+      <section class="settings">
+        <div class="card panel">
+          <div class="panel-head"><h2>Modifier la page</h2></div>
+          <form id="edit-form" novalidate>
+            <div class="field">
+              <label for="edit-title">Titre</label>
+              <input class="input" id="edit-title" name="title" maxlength="80" required>
+            </div>
+            <div class="field">
+              <label for="edit-desc">Description</label>
+              <textarea class="textarea" id="edit-desc" name="description" maxlength="600" rows="4"></textarea>
+            </div>
+            <p class="form-error" id="edit-error" role="alert"></p>
+            <div><button class="btn btn-primary" type="submit"><span class="btn-label">Enregistrer</span><span class="spinner" aria-hidden="true"></span></button></div>
+          </form>
+        </div>
+        <div class="card panel danger">
+          <div class="panel-head"><h2>Zone sensible</h2></div>
+          <p>Supprimer la liste efface définitivement la page publique et tous les inscrits. Exportez le CSV avant si besoin.</p>
+          <button class="btn btn-danger" type="button" id="delete-list">Supprimer cette liste</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
