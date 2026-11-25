@@ -7,7 +7,7 @@
   const PAGE = 25;
   const DAY = 86_400_000;
 
-  const state = { data: null, range: 30, query: '', shown: PAGE, signature: '', seenIds: null, newIds: new Set() };
+  const state = { data: null, range: 30, sort: 'recent', query: '', shown: PAGE, signature: '', seenIds: null, newIds: new Set() };
 
   // --- Dates ----------------------------------------------------------------
   const dayKey = (d) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
@@ -200,15 +200,20 @@
   const ICON_TRASH = '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
 
   function renderRows() {
-    const { subscribers, total, hidden, plan } = state.data;
+    const { subscribers, total, hidden, plan, referred } = state.data;
     renderLocked(hidden, plan);
     const q = state.query.trim().toLowerCase();
-    const filtered = q ? subscribers.filter((s) => s.email.includes(q)) : subscribers;
+    const sorted = state.sort === 'rank' ? [...subscribers].sort((a, b) => a.position - b.position) : subscribers;
+    const filtered = q ? sorted.filter((s) => s.email.includes(q)) : sorted;
     const visible = filtered.slice(0, state.shown);
 
+    const parts = [plural(total, 'personne inscrite', 'personnes inscrites')];
+    if (referred) parts.push(`dont ${fmt.format(referred)} par parrainage`);
+    if (hidden) parts.push(`${fmt.format(subscribers.length)} ${subscribers.length > 1 ? 'visibles' : 'visible'}`);
+    parts.push(state.sort === 'rank' ? 'par ordre de passage' : 'du plus récent au plus ancien');
     $('list-sub').textContent = q
       ? `${plural(filtered.length, 'résultat', 'résultats')} sur ${fmt.format(total)}`
-      : `${plural(total, 'personne inscrite', 'personnes inscrites')}, du plus récent au plus ancien${hidden ? ` · ${fmt.format(subscribers.length)} ${subscribers.length > 1 ? 'visibles' : 'visible'}` : ''}`;
+      : parts.join(' · ');
 
     $('rows').replaceChildren(
       ...visible.map((s) => {
@@ -220,7 +225,12 @@
         av.style.background = avatarColor(s.email);
         return el('tr', { className: state.newIds.has(s.id) ? 'is-new' : '' },
           el('td', { className: 'num', textContent: fmt.format(s.position) }),
-          el('td', { className: 'email' }, av, s.email),
+          el('td', { className: 'email' }, av, s.email,
+            s.referredBy ? el('span', { className: 'ref-by', textContent: `parrainé·e par ${s.referredBy}` }) : null),
+          el('td', { className: 'refs', title: s.referrals ? `+${s.referrals * state.data.referralBoost} places gagnées` : '' },
+            s.referrals
+              ? el('span', { className: 'ref-pill', textContent: `${fmt.format(s.referrals)} ${s.referrals > 1 ? 'filleuls' : 'filleul'}` })
+              : el('span', { className: 'ref-none', textContent: '—' })),
           el('td', { className: 'date', title: fmtFull.format(new Date(s.createdAt)) },
             fmtFull.format(new Date(s.createdAt)),
             rel ? el('span', { className: 'rel muted', textContent: ` · ${rel}` }) : null),
@@ -291,7 +301,7 @@
   async function load({ first = false } = {}) {
     try {
       const data = await api(API);
-      const signature = `${data.total}:${data.hidden}:${data.subscribers[0]?.id}:${data.list.title}:${data.list.description}`;
+      const signature = `${data.total}:${data.hidden}:${data.referred}:${data.subscribers[0]?.id}:${data.list.title}:${data.list.description}`;
       if (!first && signature === state.signature) return;
       const ids = new Set(data.subscribers.map((s) => s.id));
       state.newIds = state.seenIds ? new Set([...ids].filter((id) => !state.seenIds.has(id))) : new Set();
@@ -340,6 +350,15 @@
     state.shown += PAGE;
     renderRows();
   });
+
+  document.querySelectorAll('[data-sort]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      state.sort = btn.dataset.sort;
+      state.shown = PAGE;
+      document.querySelectorAll('[data-sort]').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+      renderRows();
+    })
+  );
 
   document.querySelectorAll('[data-range]').forEach((btn) =>
     btn.addEventListener('click', () => {

@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, scrypt, timingSafeEqual, createHash, createHmac } from 'node:crypto';
+import { randomBytes, randomInt, scrypt, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import { readFile, stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
@@ -20,6 +20,8 @@ const SESSION_RENEW = 15 * 86_400_000; // prolongée si elle expire dans moins d
 
 // Facturation : gratuit jusqu'à FREE_LIMIT inscrits (tous les comptes confondus), Pro illimité.
 const FREE_LIMIT = 100;
+// Parrainage : nombre de places gagnées dans la file pour chaque personne inscrite avec son lien.
+const REFERRAL_BOOST = 5;
 const STRIPE = {
   secretKey: process.env.STRIPE_SECRET_KEY || '',
   priceId: process.env.STRIPE_PRICE_ID || '',
@@ -110,6 +112,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_subscribers_list ON subscribers(list_id, id);
 `);
 
+// Parrainage : chaque inscrit a un code ; referred_by pointe vers son parrain.
+const subscriberColumns = new Set(db.prepare("SELECT name FROM pragma_table_info('subscribers')").all().map((c) => c.name));
+if (!subscriberColumns.has('ref_code')) db.exec('ALTER TABLE subscribers ADD COLUMN ref_code TEXT');
+if (!subscriberColumns.has('referred_by')) {
+  db.exec('ALTER TABLE subscribers ADD COLUMN referred_by INTEGER REFERENCES subscribers(id) ON DELETE SET NULL');
+}
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_ref_code ON subscribers(ref_code);
+  CREATE INDEX IF NOT EXISTS idx_subscribers_referred_by ON subscribers(referred_by);
+`);
+
 const q = {
   // Comptes & sessions
   insertUser: db.prepare('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)'),
@@ -147,10 +160,29 @@ const q = {
 
   // Inscrits
   count: db.prepare('SELECT COUNT(*) AS n FROM subscribers WHERE list_id = ?'),
-  insertSub: db.prepare('INSERT INTO subscribers (list_id, email, created_at) VALUES (?, ?, ?) ON CONFLICT (list_id, email) DO NOTHING'),
-  subByEmail: db.prepare('SELECT id FROM subscribers WHERE list_id = ? AND email = ?'),
-  position: db.prepare('SELECT COUNT(*) AS n FROM subscribers WHERE list_id = ? AND id <= ?'),
-  subs: db.prepare('SELECT id, email, created_at FROM subscribers WHERE list_id = ? ORDER BY id DESC'),
+  insertSub: db.prepare(`
+    INSERT INTO subscribers (list_id, email, created_at, ref_code, referred_by) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (list_id, email) DO NOTHING`),
+  subByEmail: db.prepare('SELECT id, ref_code FROM subscribers WHERE list_id = ? AND email = ?'),
+  subByCode: db.prepare('SELECT id, ref_code FROM subscribers WHERE list_id = ? AND ref_code = ?'),
+  subsWithoutCode: db.prepare('SELECT id FROM subscribers WHERE ref_code IS NULL'),
+  setRefCode: db.prepare('UPDATE subscribers SET ref_code = ? WHERE id = ?'),
+  // Classement : ordre d'arrivée, moins REFERRAL_BOOST places par filleul. À score égal, celui qui a le plus
+  // de filleuls passe devant (chaque filleul fait donc gagner exactement REFERRAL_BOOST places), puis le plus ancien.
+  ranked: db.prepare(`
+    WITH refs AS (
+      SELECT referred_by AS id, COUNT(*) AS n FROM subscribers
+      WHERE list_id = ? AND referred_by IS NOT NULL GROUP BY referred_by
+    ),
+    base AS (
+      SELECT s.id, s.email, s.created_at, s.ref_code, s.referred_by,
+        COALESCE(refs.n, 0) AS referrals,
+        ROW_NUMBER() OVER (ORDER BY s.id) AS arrival
+      FROM subscribers s LEFT JOIN refs ON refs.id = s.id
+      WHERE s.list_id = ?
+    )
+    SELECT *, ROW_NUMBER() OVER (ORDER BY arrival - ? * referrals, referrals DESC, id) AS rank
+    FROM base ORDER BY id DESC`),
   deleteSub: db.prepare('DELETE FROM subscribers WHERE id = ? AND list_id = ?'),
 };
 
@@ -434,15 +466,68 @@ function createList(user, { title, description }) {
   return { slug, title: t, description: d };
 }
 
+// --- Parrainage --------------------------------------------------------------
+const REF_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // sans 0/o, 1/l/i : lisible à l'oral
+const REF_RE = /^[a-z0-9]{8}$/;
+
+function newRefCode() {
+  let code = '';
+  for (let i = 0; i < 8; i++) code += REF_ALPHABET[randomInt(REF_ALPHABET.length)];
+  return code;
+}
+
+export function normalizeRef(raw) {
+  const ref = String(raw ?? '').trim().toLowerCase();
+  return REF_RE.test(ref) ? ref : null;
+}
+
+// Les inscrits d'avant le parrainage reçoivent un code au démarrage.
+for (const { id } of q.subsWithoutCode.all()) q.setRefCode.run(newRefCode(), id);
+
+/** Classement complet d'une liste (du plus récent au plus ancien), avec rang et nombre de filleuls. */
+function rankedSubscribers(listId) {
+  return q.ranked.all(listId, listId, REFERRAL_BOOST).map((r) => ({
+    id: Number(r.id),
+    email: r.email,
+    createdAt: Number(r.created_at),
+    refCode: r.ref_code,
+    referredBy: r.referred_by == null ? null : Number(r.referred_by),
+    referrals: Number(r.referrals),
+    position: Number(r.rank),
+  }));
+}
+
+/** Ce qu'un inscrit peut savoir de lui-même : rang, filleuls et lien à partager. */
+function subscriberStatus(list, id) {
+  const all = rankedSubscribers(list.id);
+  const me = all.find((s) => s.id === id);
+  return { position: me.position, referrals: me.referrals, refCode: me.refCode, total: all.length, boost: REFERRAL_BOOST };
+}
+
 function subscribe(list, body) {
   // Pot de miel : les robots remplissent tous les champs.
-  if (body.website) return { ok: true, position: countFor(list.id) + 1, already: false };
+  if (body.website) return { ok: true, already: false, position: countFor(list.id) + 1, referrals: 0, refCode: newRefCode(), boost: REFERRAL_BOOST };
   const email = normalizeEmail(body.email);
   if (!email) throw new HttpError(400, 'Adresse email invalide.');
-  const result = q.insertSub.run(list.id, email, Date.now());
+
+  // Un parrain n'est retenu que s'il appartient à la même liste.
+  const ref = normalizeRef(body.ref);
+  const referrer = ref ? q.subByCode.get(list.id, ref) : null;
+
+  let result;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      // ON CONFLICT : une adresse déjà inscrite ne rapporte rien à personne.
+      result = q.insertSub.run(list.id, email, Date.now(), newRefCode(), referrer ? referrer.id : null);
+      break;
+    } catch (err) {
+      // Collision (très improbable) sur le code de parrainage : on en tire un autre.
+      if (attempt < 3 && String(err.message).includes('ref_code')) continue;
+      throw err;
+    }
+  }
   const { id } = q.subByEmail.get(list.id, email);
-  const position = Number(q.position.get(list.id, id).n);
-  return { ok: true, position, already: result.changes === 0, total: countFor(list.id) };
+  return { ok: true, already: result.changes === 0, ...subscriberStatus(list, id) };
 }
 
 /**
@@ -476,14 +561,28 @@ function planFor(userId) {
 }
 
 function listPayload(list, plan) {
-  const rows = q.subs.all(list.id);
-  const total = rows.length;
-  const all = rows.map((r, i) => ({ id: Number(r.id), email: r.email, createdAt: Number(r.created_at), position: total - i }));
-  const visible = all.filter((s) => s.id <= plan.visibleUpTo);
+  const all = rankedSubscribers(list.id);
+  const isVisible = (s) => s.id <= plan.visibleUpTo;
+  const byId = new Map(all.map((s) => [s.id, s]));
+  const visible = all.filter(isVisible).map((s) => {
+    const referrer = s.referredBy != null ? byId.get(s.referredBy) : null;
+    return {
+      id: s.id,
+      email: s.email,
+      createdAt: s.createdAt,
+      position: s.position,
+      referrals: s.referrals,
+      refCode: s.refCode,
+      // L'email du parrain n'est donné que s'il est lui-même visible dans le plan actuel.
+      referredBy: referrer && isVisible(referrer) ? referrer.email : null,
+    };
+  });
   return {
     list: { title: list.title, description: list.description, slug: list.slug, createdAt: list.created_at },
-    total,
-    hidden: total - visible.length,
+    total: all.length,
+    hidden: all.length - visible.length,
+    referred: all.filter((s) => s.referredBy != null).length,
+    referralBoost: REFERRAL_BOOST,
     // Dates de toutes les inscriptions (masquées comprises) pour les statistiques et le graphique.
     timestamps: all.map((s) => s.createdAt),
     subscribers: visible,
@@ -667,7 +766,23 @@ function formatCount(n) {
   return new Intl.NumberFormat('fr-FR').format(n);
 }
 
-function renderWaitlist(list, { count, success, error, email = '' }) {
+/** Liens de partage du lien de parrainage (aucun script tiers : de simples URL). */
+function shareLinks(text, url, title) {
+  const enc = encodeURIComponent;
+  return {
+    whatsapp: `https://wa.me/?text=${enc(`${text} ${url}`)}`,
+    x: `https://twitter.com/intent/tweet?text=${enc(text)}&url=${enc(url)}`,
+    linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${enc(url)}`,
+    email: `mailto:?subject=${enc(`Rejoins la liste d’attente de ${title}`)}&body=${enc(`${text}\n${url}`)}`,
+  };
+}
+
+/**
+ * Page publique d'une liste.
+ * - ref / invited : code du parrain (venu d'un lien ?ref=…) et s'il est valide pour cette liste ;
+ * - base : URL de l'app, pour construire le lien de parrainage absolu.
+ */
+function renderWaitlist(list, { count, success, error, email = '', ref = null, invited = false, base }) {
   const paragraphs = list.description
     ? list.description
         .split(/\n{2,}/)
@@ -679,6 +794,15 @@ function renderWaitlist(list, { count, success, error, email = '' }) {
       ? `<strong data-count>${formatCount(count)}</strong> ${count > 1 ? 'personnes ont' : 'personne a'} déjà rejoint la liste`
       : 'Soyez parmi les premiers à rejoindre la liste';
 
+  const pageUrl = `${base}/w/${list.slug}`;
+  const shareUrl = success ? `${pageUrl}?ref=${success.refCode}` : '';
+  const shareText = `Je viens de rejoindre la liste d’attente de ${list.title}. Inscris-toi avec mon lien :`;
+  const links = shareLinks(shareText, shareUrl, list.title);
+  const referralsLine = (n) =>
+    n > 0
+      ? `<strong>${formatCount(n)}</strong> ${n > 1 ? 'personnes se sont inscrites' : 'personne s’est inscrite'} grâce à vous.`
+      : 'Personne ne s’est encore inscrit avec votre lien.';
+
   const successBlock = `
       <div class="wl-success" data-success ${success ? '' : 'hidden'} role="status" aria-live="polite">
         <div class="wl-check" aria-hidden="true">
@@ -686,7 +810,30 @@ function renderWaitlist(list, { count, success, error, email = '' }) {
         </div>
         <h2 data-success-title>${success?.already ? 'Vous êtes déjà inscrit·e' : 'C’est noté !'}</h2>
         <p>Vous êtes <strong data-position>n°${success ? formatCount(success.position) : ''}</strong> sur la liste. On vous prévient dès que c’est prêt.</p>
+
+        <div class="referral">
+          <h3>Passez devant : <span class="gain">+${REFERRAL_BOOST} places</span> par ami inscrit</h3>
+          <p class="referral-sub">Partagez votre lien personnel. Chaque personne qui s’inscrit avec vous fait gagner ${REFERRAL_BOOST} places.</p>
+          <div class="referral-link">
+            <label class="sr-only" for="share-url">Votre lien de parrainage</label>
+            <input id="share-url" class="input" readonly value="${escapeHtml(shareUrl)}" data-share-url>
+            <button type="button" class="btn btn-primary" data-copy-share>Copier</button>
+          </div>
+          <div class="share-row">
+            <a class="share-btn" data-share="whatsapp" href="${escapeHtml(links.whatsapp)}" target="_blank" rel="noopener">WhatsApp</a>
+            <a class="share-btn" data-share="x" href="${escapeHtml(links.x)}" target="_blank" rel="noopener">X</a>
+            <a class="share-btn" data-share="linkedin" href="${escapeHtml(links.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>
+            <a class="share-btn" data-share="email" href="${escapeHtml(links.email)}">Email</a>
+            <button type="button" class="share-btn" data-share-native hidden>Partager…</button>
+          </div>
+          <p class="referral-count" data-referrals>${success ? referralsLine(success.referrals) : ''}</p>
+        </div>
+        <button type="button" class="link-btn" data-not-me hidden>Ce n’est pas vous ? S’inscrire avec une autre adresse</button>
       </div>`;
+
+  const invitedBanner = invited
+    ? `<p class="invited" data-invited><span aria-hidden="true">🎁</span> Un ami vous a invité·e : inscrivez-vous pour l’aider à passer devant.</p>`
+    : '';
 
   return `<!doctype html>
 <html lang="fr">
@@ -704,12 +851,14 @@ function renderWaitlist(list, { count, success, error, email = '' }) {
 <body class="page-public">
   <div class="mesh" aria-hidden="true"><span></span><span></span><span></span></div>
   <main class="wl">
-    <div class="wl-card">
+    <div class="wl-card" data-page-url="${escapeHtml(pageUrl)}" data-share-text="${escapeHtml(shareText)}" data-title="${escapeHtml(list.title)}" data-boost="${REFERRAL_BOOST}">
       <span class="pill"><span class="pulse" aria-hidden="true"></span>Liste d’attente ouverte</span>
       <h1 class="wl-title">${escapeHtml(list.title)}</h1>
       ${paragraphs ? `<div class="wl-desc">${paragraphs}</div>` : ''}
+      ${success ? '' : invitedBanner}
 
       <form class="wl-form" method="post" action="/w/${escapeHtml(list.slug)}" data-form data-slug="${escapeHtml(list.slug)}" ${success ? 'hidden' : ''} novalidate>
+        <input type="hidden" name="ref" value="${escapeHtml(ref || '')}">
         <label class="sr-only" for="email">Votre adresse email</label>
         <div class="wl-field">
           <svg class="wl-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="M4 7l8 6 8-6"/></svg>
@@ -779,7 +928,16 @@ async function handle(req, res) {
   if ((m = pathname.match(/^\/w\/([a-z0-9-]+)$/))) {
     const list = q.listBySlug.get(m[1]);
     if (!list) return sendHtml(res, 404, renderNotFound());
-    if (method === 'GET') return sendHtml(res, 200, renderWaitlist(list, { count: countFor(list.id) }));
+    const base = appUrl(req);
+    // Lien de parrainage : /w/<slug>?ref=<code>. Un code inconnu est simplement ignoré.
+    const refFor = (raw) => {
+      const ref = normalizeRef(raw);
+      return ref && q.subByCode.get(list.id, ref) ? ref : null;
+    };
+    if (method === 'GET') {
+      const ref = refFor(url.searchParams.get('ref'));
+      return sendHtml(res, 200, renderWaitlist(list, { count: countFor(list.id), ref, invited: Boolean(ref), base }));
+    }
     if (method === 'POST') {
       // Soumission sans JavaScript (formulaire classique).
       let body = {};
@@ -787,10 +945,13 @@ async function handle(req, res) {
         rateLimit(`sub:${ip}`, 20, 60_000);
         body = await parseBody(req);
         const result = subscribe(list, body);
-        return sendHtml(res, 200, renderWaitlist(list, { count: countFor(list.id), success: result }));
+        return sendHtml(res, 200, renderWaitlist(list, { count: countFor(list.id), success: result, base }));
       } catch (err) {
         if (!(err instanceof HttpError)) throw err;
-        return sendHtml(res, err.status, renderWaitlist(list, { count: countFor(list.id), error: err.message, email: String(body.email ?? '') }));
+        const ref = refFor(body.ref);
+        return sendHtml(res, err.status, renderWaitlist(list, {
+          count: countFor(list.id), error: err.message, email: String(body.email ?? ''), ref, invited: Boolean(ref), base,
+        }));
       }
     }
   }
@@ -861,6 +1022,17 @@ async function handle(req, res) {
     return sendJson(res, 200, subscribe(list, await parseBody(req)));
   }
 
+  // Statut d'un inscrit (rang, filleuls) à partir de son code : la page publique
+  // l'affiche quand la personne revient sur la liste depuis le même navigateur.
+  if ((m = pathname.match(/^\/api\/w\/([a-z0-9-]+)\/status\/([a-z0-9]+)$/)) && method === 'GET') {
+    rateLimit(`status:${ip}`, 60, 60_000);
+    const list = q.listBySlug.get(m[1]);
+    const ref = normalizeRef(m[2]);
+    const sub = list && ref && q.subByCode.get(list.id, ref);
+    if (!sub) throw new HttpError(404, 'Inscription introuvable.');
+    return sendJson(res, 200, subscriberStatus(list, Number(sub.id)));
+  }
+
   // Listes de l'utilisateur connecté
   if (pathname === '/api/lists') {
     requireUser(user);
@@ -908,10 +1080,19 @@ async function handle(req, res) {
 
   if ((m = pathname.match(/^\/api\/lists\/([a-z0-9-]+)\/export\.csv$/)) && method === 'GET') {
     const list = requireOwnedList(requireUser(user), m[1]);
-    const lines = ['position,email,date_inscription'];
-    // En gratuit, l'export ne contient que les inscrits visibles.
-    for (const s of listPayload(list, planFor(user.id)).subscribers.reverse()) {
-      lines.push([s.position, csvCell(s.email), new Date(s.createdAt).toISOString()].join(','));
+    const lines = ['position,email,date_inscription,parrainages,parraine_par,lien_parrainage'];
+    const pageUrl = `${appUrl(req)}/w/${list.slug}`;
+    // Trié par classement. En gratuit, l'export ne contient que les inscrits visibles.
+    const rows = listPayload(list, planFor(user.id)).subscribers.sort((a, b) => a.position - b.position);
+    for (const s of rows) {
+      lines.push([
+        s.position,
+        csvCell(s.email),
+        new Date(s.createdAt).toISOString(),
+        s.referrals,
+        csvCell(s.referredBy || ''),
+        csvCell(`${pageUrl}?ref=${s.refCode}`),
+      ].join(','));
     }
     return send(res, 200, '﻿' + lines.join('\r\n') + '\r\n', {
       'Content-Type': 'text/csv; charset=utf-8',

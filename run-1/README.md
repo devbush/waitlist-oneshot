@@ -9,7 +9,7 @@ L’app n’a aucune dépendance : Node.js ≥ 22.13 et le module SQLite intégr
 ```bash
 npm start          # http://localhost:3000
 npm run dev        # redémarre automatiquement quand le code change
-npm test           # tests d’intégration (comptes, isolation, facturation)
+npm test           # tests d’intégration (comptes, isolation, facturation, parrainage)
 ```
 
 Variables d’environnement :
@@ -70,7 +70,19 @@ Carte de test : `4242 4242 4242 4242`, n’importe quelle date future, n’impor
 | `/signup`, `/login` | public    | Création de compte, connexion                                           |
 | `/app`              | connecté  | Mes listes, et création d’une liste avec aperçu en direct               |
 | `/app/lists/<slug>` | connecté  | Dashboard : total, aujourd’hui, 7 jours, graphique, inscrits, CSV, réglages |
-| `/w/<slug>`         | public    | Page d’inscription à la liste (fonctionne même sans JavaScript)         |
+| `/w/<slug>`         | public    | Page d’inscription à la liste, avec lien de parrainage (fonctionne même sans JavaScript) |
+
+## Parrainage
+
+Après son inscription, chaque inscrit reçoit un lien personnel `/w/<slug>?ref=<code>`, avec des boutons pour le copier ou le partager (WhatsApp, X, LinkedIn, email, ou le partage natif sur mobile).
+
+- **Règle** : chaque personne qui s’inscrit avec ce lien fait gagner **5 places** au parrain. Le rang vaut l’ordre d’arrivée moins 5 places par filleul. À score égal, celui qui a le plus de filleuls passe devant, puis le plus ancien. Le rang ne descend jamais sous 1. Le nombre de places se règle avec `REFERRAL_BOOST` en haut de `server.js`.
+- **Ce qui compte** : uniquement une *nouvelle* inscription sur la *même* liste. Se réinscrire, ou réinscrire une adresse déjà présente, ne rapporte rien. Un code inconnu ou venant d’une autre liste est ignoré.
+- **Retour sur la page** : le navigateur mémorise le code. Un inscrit qui revient voit directement son rang et son nombre de filleuls.
+- **Dashboard** : une colonne « Parrainages », la mention « parrainé·e par… », et un tri par classement. L’export CSV est trié par classement et contient le nombre de filleuls, le parrain et le lien de parrainage de chacun (pratique pour leur écrire).
+- **Modération** : supprimer un faux filleul depuis le dashboard retire immédiatement les places gagnées par son parrain.
+
+Il n’y a pas de vérification de l’adresse email. Quelqu’un de motivé peut donc gonfler son rang avec de fausses adresses : la limite d’inscriptions par IP freine, mais n’empêche pas. Surveillez les colonnes « Parrainages » et « parrainé·e par » avant d’attribuer des accès.
 
 ## Comptes et sécurité
 
