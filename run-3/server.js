@@ -2,7 +2,7 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
-import { randomBytes, scrypt as scryptCb, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes, scrypt as scryptCb, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,18 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const PORT = Number(process.env.PORT) || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(ROOT, 'data', 'waitlist.db');
 const SESSION_DAYS = 30;
+
+// ---------------------------------------------------------------- Abonnement (Stripe)
+const FREE_LIMIT = 100; // inscrits visibles par compte en plan gratuit
+const STRIPE = {
+  secretKey: process.env.STRIPE_SECRET_KEY || '',
+  priceId: process.env.STRIPE_PRICE_ID || '', // prix récurrent : 9 €/mois
+  webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+  apiBase: process.env.STRIPE_API_BASE || 'https://api.stripe.com', // surchargeable pour les tests
+};
+// Sans clé Stripe, les plans sont désactivés : tout le monde est illimité.
+const BILLING_ENABLED = Boolean(STRIPE.secretKey && STRIPE.priceId);
+const ACTIVE_STATUSES = new Set(['active', 'trialing', 'past_due']); // past_due : Stripe retente le paiement
 
 // ---------------------------------------------------------------- Base de données
 mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -55,13 +67,33 @@ if (!db.prepare('PRAGMA table_info(lists)').all().some((c) => c.name === 'user_i
   db.exec('ALTER TABLE lists ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_lists_user ON lists(user_id, id)');
+// Migration : colonnes d'abonnement sur les comptes.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(users)').all().map((c) => c.name));
+  const add = {
+    stripe_customer_id: 'TEXT',
+    subscription_id: 'TEXT',
+    subscription_status: 'TEXT',
+    current_period_end: 'INTEGER',
+    cancel_at_period_end: 'INTEGER NOT NULL DEFAULT 0',
+  };
+  for (const [name, type] of Object.entries(add)) if (!cols.has(name)) db.exec(`ALTER TABLE users ADD COLUMN ${name} ${type}`);
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_customer ON users(stripe_customer_id)');
+}
 
 const q = {
   // Comptes & sessions
   insertUser: db.prepare('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)'),
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   insertSession: db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)'),
-  sessionUser: db.prepare('SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'),
+  sessionUser: db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'),
+  userById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  userByCustomer: db.prepare('SELECT * FROM users WHERE stripe_customer_id = ?'),
+  setCustomer: db.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ? AND stripe_customer_id IS NULL'),
+  setSubscription: db.prepare('UPDATE users SET subscription_id = ?, subscription_status = ?, current_period_end = ?, cancel_at_period_end = ? WHERE id = ?'),
+  // Quota : nombre d'inscrits du compte, et id du 100e (les plus anciens restent visibles)
+  usage: db.prepare('SELECT COUNT(*) AS n FROM subscribers s JOIN lists l ON l.id = s.list_id WHERE l.user_id = ?'),
+  cutoff: db.prepare('SELECT s.id FROM subscribers s JOIN lists l ON l.id = s.list_id WHERE l.user_id = ? ORDER BY s.id LIMIT 1 OFFSET ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   purgeSessions: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
   // Listes
@@ -71,7 +103,8 @@ const q = {
   listsOfUser: db.prepare(`
     SELECT l.slug, l.title, l.description, l.created_at,
            COUNT(s.id) AS total,
-           COALESCE(SUM(s.created_at >= ?), 0) AS last7
+           COALESCE(SUM(s.created_at >= ?), 0) AS last7,
+           COALESCE(SUM(s.id > ?), 0) AS locked
     FROM lists l LEFT JOIN subscribers s ON s.list_id = l.id
     WHERE l.user_id = ? GROUP BY l.id ORDER BY l.id DESC`),
   claimList: db.prepare('UPDATE lists SET user_id = ? WHERE id = ? AND user_id IS NULL'),
@@ -138,7 +171,7 @@ const json = (res, status, data, extra = {}) =>
   send(res, status, JSON.stringify(data), 'application/json; charset=utf-8', { 'Cache-Control': 'no-store', ...extra });
 const redirect = (res, location, extra = {}) => { res.writeHead(302, { Location: location, ...extra }); res.end(); };
 
-function readJson(req, maxBytes = 16 * 1024) {
+function readRaw(req, maxBytes) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -147,14 +180,17 @@ function readJson(req, maxBytes = 16 * 1024) {
       if (size > maxBytes) { reject(Object.assign(new Error('Requête trop volumineuse'), { status: 413 })); req.destroy(); return; }
       chunks.push(c);
     });
-    req.on('end', () => {
-      try {
-        const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
-        resolve(body && typeof body === 'object' ? body : {});
-      } catch { reject(Object.assign(new Error('JSON invalide'), { status: 400 })); }
-    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+async function readJson(req, maxBytes = 16 * 1024) {
+  const raw = await readRaw(req, maxBytes);
+  try {
+    const body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
+    return body && typeof body === 'object' ? body : {};
+  } catch { throw Object.assign(new Error('JSON invalide'), { status: 400 }); }
 }
 
 // Derrière un reverse proxy (Nginx, Render, Fly…), définir TRUST_PROXY=1 pour lire l'IP et le protocole réels.
@@ -217,6 +253,164 @@ function sameOrigin(req) {
   try { return new URL(origin).host === req.headers.host; } catch { return false; }
 }
 
+// ---------------------------------------------------------------- Plans & Stripe
+const isPro = (user) => !BILLING_ENABLED || ACTIVE_STATUSES.has(user.subscription_status);
+
+// État du plan : au-delà de FREE_LIMIT, les inscrits les plus récents sont verrouillés
+// (ils sont bien enregistrés, mais leurs emails restent masqués jusqu'au passage en Pro).
+function planOf(user) {
+  const used = q.usage.get(user.id).n;
+  const pro = isPro(user);
+  const cutoffRow = pro ? null : q.cutoff.get(user.id, FREE_LIMIT - 1);
+  return {
+    billingEnabled: BILLING_ENABLED,
+    pro,
+    limit: pro ? null : FREE_LIMIT,
+    used,
+    locked: pro ? 0 : Math.max(0, used - FREE_LIMIT),
+    lastVisibleId: cutoffRow && used > FREE_LIMIT ? cutoffRow.id : null, // null = tout est visible
+    status: user.subscription_status || null,
+    currentPeriodEnd: user.current_period_end ? user.current_period_end * 1000 : null,
+    cancelAtPeriodEnd: Boolean(user.cancel_at_period_end),
+  };
+}
+
+const publicPlan = ({ lastVisibleId, ...rest }) => rest;
+const isLocked = (plan, subscriberId) => plan.lastVisibleId !== null && subscriberId > plan.lastVisibleId;
+
+// Encodage application/x-www-form-urlencoded à la Stripe : a[b][0][c]=…
+function stripeForm(obj, prefix = '', out = new URLSearchParams()) {
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null) continue;
+    const key = prefix ? `${prefix}[${k}]` : k;
+    if (typeof v === 'object') stripeForm(v, key, out);
+    else out.append(key, String(v));
+  }
+  return out;
+}
+
+async function stripe(method, endpoint, params) {
+  const res = await fetch(`${STRIPE.apiBase}/v1/${endpoint}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${STRIPE.secretKey}`,
+      ...(params ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
+    },
+    body: params ? stripeForm(params) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error(`Stripe ${method} ${endpoint} → ${res.status}`, data.error?.message || '');
+    throw Object.assign(new Error('Le service de paiement est indisponible. Réessayez dans un instant.'), { status: 502 });
+  }
+  return data;
+}
+
+// Vérifie l'en-tête Stripe-Signature (HMAC-SHA256 de "timestamp.payload", tolérance 5 min).
+function verifyStripeSignature(raw, header) {
+  if (!STRIPE.webhookSecret || !header) return false;
+  const parts = {};
+  const v1 = [];
+  for (const item of String(header).split(',')) {
+    const [k, v] = item.split('=');
+    if (k === 't') parts.t = v;
+    if (k === 'v1') v1.push(v);
+  }
+  const t = Number(parts.t);
+  if (!t || Math.abs(Date.now() / 1000 - t) > 300) return false;
+  const expected = createHmac('sha256', STRIPE.webhookSecret).update(`${t}.`).update(raw).digest();
+  return v1.some((sig) => {
+    const got = Buffer.from(sig, 'hex');
+    return got.length === expected.length && timingSafeEqual(got, expected);
+  });
+}
+
+// Recharge l'abonnement depuis Stripe (source de vérité) et l'enregistre sur le compte.
+// Relire l'objet plutôt que se fier au contenu de l'événement évite les soucis d'ordre de livraison.
+async function syncSubscription(subscriptionId) {
+  const sub = await stripe('GET', `subscriptions/${encodeURIComponent(subscriptionId)}`);
+  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+  const user = customerId && q.userByCustomer.get(customerId);
+  if (!user) return null;
+  // Un ancien abonnement qui se termine ne doit pas écraser un abonnement plus récent encore actif.
+  if (user.subscription_id && user.subscription_id !== sub.id && !ACTIVE_STATUSES.has(sub.status)) return user;
+  const periodEnd = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end ?? null;
+  q.setSubscription.run(sub.id, sub.status, periodEnd, sub.cancel_at_period_end ? 1 : 0, user.id);
+  return q.userById.get(user.id);
+}
+
+async function handleStripeWebhook(req, res) {
+  const raw = await readRaw(req, 1024 * 1024);
+  if (!verifyStripeSignature(raw, req.headers['stripe-signature'])) return json(res, 400, { error: 'Signature invalide.' });
+  const event = JSON.parse(raw.toString('utf8'));
+  const obj = event.data?.object || {};
+
+  if (event.type === 'checkout.session.completed' && obj.mode === 'subscription') {
+    const userId = Number(obj.client_reference_id);
+    if (userId && obj.customer) q.setCustomer.run(obj.customer, userId);
+    if (obj.subscription) await syncSubscription(obj.subscription);
+  } else if (event.type.startsWith('customer.subscription.')) {
+    await syncSubscription(obj.id);
+  }
+  return json(res, 200, { received: true });
+}
+
+function appUrl(req) {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, '');
+  return `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
+}
+
+async function handleBilling(req, res, user, action) {
+  if (!BILLING_ENABLED) return json(res, 400, { error: 'Les paiements ne sont pas configurés sur ce serveur.' });
+
+  // POST /api/billing/checkout — démarre l'abonnement Pro via Stripe Checkout
+  if (action === 'checkout') {
+    if (isPro(user)) return json(res, 409, { error: 'Vous êtes déjà abonné·e à Pro.' });
+    if (rateLimited(`checkout:${user.id}`, 20, 60 * 60_000)) return json(res, 429, { error: 'Trop de tentatives. Réessayez plus tard.' });
+    let customerId = user.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe('POST', 'customers', { email: user.email, metadata: { user_id: user.id } });
+      q.setCustomer.run(customer.id, user.id);
+      customerId = q.userById.get(user.id).stripe_customer_id; // en cas de course, garder le premier
+    }
+    const base = appUrl(req);
+    const session = await stripe('POST', 'checkout/sessions', {
+      mode: 'subscription',
+      customer: customerId,
+      client_reference_id: user.id,
+      line_items: [{ price: STRIPE.priceId, quantity: 1 }],
+      allow_promotion_codes: 'true',
+      subscription_data: { metadata: { user_id: user.id } },
+      success_url: `${base}/app/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}/app/billing?checkout=cancel`,
+    });
+    return json(res, 200, { url: session.url });
+  }
+
+  // POST /api/billing/sync — au retour de Checkout, n'attend pas le webhook pour activer Pro
+  if (action === 'sync') {
+    const body = await readJson(req);
+    if (typeof body.session_id !== 'string' || !body.session_id.startsWith('cs_')) return json(res, 400, { error: 'Session invalide.' });
+    const session = await stripe('GET', `checkout/sessions/${encodeURIComponent(body.session_id)}`);
+    if (String(session.client_reference_id) !== String(user.id)) return json(res, 404, { error: 'Session introuvable.' });
+    if (session.customer) q.setCustomer.run(session.customer, user.id);
+    if (session.subscription) await syncSubscription(typeof session.subscription === 'string' ? session.subscription : session.subscription.id);
+    return json(res, 200, { plan: publicPlan(planOf(q.userById.get(user.id))) });
+  }
+
+  // POST /api/billing/portal — gérer l'abonnement (carte, factures, résiliation)
+  if (action === 'portal') {
+    if (!user.stripe_customer_id) return json(res, 400, { error: "Aucun abonnement à gérer pour l'instant." });
+    const portal = await stripe('POST', 'billing_portal/sessions', {
+      customer: user.stripe_customer_id,
+      return_url: `${appUrl(req)}/app/billing`,
+    });
+    return json(res, 200, { url: portal.url });
+  }
+
+  return json(res, 404, { error: 'Route inconnue.' });
+}
+
 // ---------------------------------------------------------------- Pages
 const MIME = { '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.html': 'text/html; charset=utf-8' };
 const cache = new Map();
@@ -269,14 +463,25 @@ async function renderAuthPage(mode, next) {
   });
 }
 
-const renderAppPage = async (name, user) => fill(await file(name), { userEmail: escapeHtml(user.email) });
+const renderAppPage = async (name, user) => fill(await file(name), {
+  userEmail: escapeHtml(user.email),
+  planBadge: !BILLING_ENABLED ? '' : isPro(user)
+    ? '<a class="plan-pill pro" href="/app/billing">Pro</a>'
+    : '<a class="plan-pill" href="/app/billing">Gratuit</a>',
+});
 
 // ---------------------------------------------------------------- API
-function dashboardPayload(list) {
+// Les inscrits verrouillés (plan gratuit au-delà du quota) sont renvoyés sans leur email.
+function dashboardPayload(list, user) {
+  const plan = planOf(user);
+  const subscribers = q.subs.all(list.id).map((s) =>
+    isLocked(plan, s.id) ? { id: s.id, email: null, created_at: s.created_at, locked: true } : s);
   return {
     list: { slug: list.slug, title: list.title, description: list.description, created_at: list.created_at },
-    total: q.count.get(list.id).n,
-    subscribers: q.subs.all(list.id),
+    total: subscribers.length,
+    locked: subscribers.filter((s) => s.locked).length,
+    subscribers,
+    plan: publicPlan(plan),
   };
 }
 
@@ -338,6 +543,10 @@ async function handleAuth(req, res, action) {
 
 async function handleApi(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
+
+  // POST /api/stripe/webhook — appelé par Stripe (authentifié par signature, pas par cookie)
+  if (url.pathname === '/api/stripe/webhook' && req.method === 'POST') return handleStripeWebhook(req, res);
+
   if (req.method !== 'GET' && !sameOrigin(req)) return json(res, 403, { error: 'Origine refusée.' });
 
   // POST /api/auth/(signup|login|logout)
@@ -363,14 +572,19 @@ async function handleApi(req, res, url) {
   const user = currentUser(req);
   if (!user) return json(res, 401, { error: 'Session expirée. Reconnectez-vous.' });
 
-  if (parts[1] === 'me' && parts.length === 2 && req.method === 'GET') return json(res, 200, { email: user.email });
+  if (parts[1] === 'me' && parts.length === 2 && req.method === 'GET') return json(res, 200, { email: user.email, plan: publicPlan(planOf(user)) });
+
+  // POST /api/billing/(checkout|sync|portal)
+  if (parts[1] === 'billing' && parts.length === 3 && req.method === 'POST') return handleBilling(req, res, user, parts[2]);
 
   if (parts[1] !== 'lists') return json(res, 404, { error: 'Route inconnue.' });
 
   // GET /api/lists — mes listes
   if (parts.length === 2 && req.method === 'GET') {
     const since = new Date(Date.now() - 7 * 86400_000).toISOString();
-    return json(res, 200, { lists: q.listsOfUser.all(since, user.id) });
+    const plan = planOf(user);
+    const lists = q.listsOfUser.all(since, plan.lastVisibleId ?? Number.MAX_SAFE_INTEGER, user.id);
+    return json(res, 200, { lists, plan: publicPlan(plan) });
   }
 
   // POST /api/lists — créer une liste
@@ -397,11 +611,11 @@ async function handleApi(req, res, url) {
   if (!list || list.user_id !== user.id) return json(res, 404, { error: 'Liste introuvable.' });
 
   if (parts.length === 3) {
-    if (req.method === 'GET') return json(res, 200, dashboardPayload(list));
+    if (req.method === 'GET') return json(res, 200, dashboardPayload(list, user));
     if (req.method === 'PATCH') {
       const { title, description } = readListFields(await readJson(req));
       q.updateList.run(title, description, list.id);
-      return json(res, 200, dashboardPayload({ ...list, title, description }));
+      return json(res, 200, dashboardPayload({ ...list, title, description }, user));
     }
     if (req.method === 'DELETE') {
       q.deleteList.run(list.id);
@@ -411,11 +625,12 @@ async function handleApi(req, res, url) {
 
   if (parts.length === 5 && parts[3] === 'subscribers' && req.method === 'DELETE') {
     q.deleteSub.run(Number(parts[4]), list.id);
-    return json(res, 200, dashboardPayload(list));
+    return json(res, 200, dashboardPayload(list, user));
   }
 
   if (parts.length === 4 && parts[3] === 'export.csv' && req.method === 'GET') {
-    const rows = q.subs.all(list.id).reverse();
+    const plan = planOf(user);
+    const rows = q.subs.all(list.id).reverse().filter((r) => !isLocked(plan, r.id));
     const csv = ['"#","email","inscrit_le"', ...rows.map((r, i) => [i + 1, r.email, r.created_at].map(csvCell).join(','))].join('\r\n');
     return send(res, 200, '﻿' + csv, 'text/csv; charset=utf-8', {
       'Content-Disposition': `attachment; filename="${list.slug}-inscrits.csv"`,
@@ -459,10 +674,11 @@ const server = http.createServer(async (req, res) => {
     // Pages privées : connexion obligatoire
     const appList = p.match(/^\/app\/lists\/([a-z0-9-]+)\/?$/);
     const legacy = p.match(/^\/d\/([A-Za-z0-9_-]+)\/?$/);
-    if (p === '/app' || appList || legacy) {
+    if (p === '/app' || p === '/app/billing' || appList || legacy) {
       if (!user) return redirect(res, `/login?next=${encodeURIComponent(p)}`);
 
       if (p === '/app') return send(res, 200, await renderAppPage('app.html', user), undefined, PRIVATE);
+      if (p === '/app/billing') return send(res, 200, await renderAppPage('billing.html', user), undefined, PRIVATE);
 
       if (appList) {
         const list = q.listBySlug.get(appList[1]);
@@ -487,4 +703,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 q.purgeSessions.run(Date.now());
-server.listen(PORT, () => console.log(`Waitlist prêt sur http://localhost:${PORT}`));
+server.listen(PORT, () => {
+  console.log(`Waitlist prêt sur http://localhost:${PORT}`);
+  if (!BILLING_ENABLED) console.log('Paiements Stripe désactivés (STRIPE_SECRET_KEY / STRIPE_PRICE_ID absents) : tous les comptes sont illimités.');
+  else if (!STRIPE.webhookSecret) console.warn('⚠ STRIPE_WEBHOOK_SECRET absent : les renouvellements et résiliations ne seront pas synchronisés.');
+});

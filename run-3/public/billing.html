@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Abonnement — Waitlist</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="container">
+    <header class="topbar">
+      <a class="brand" href="/app">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h6"/></svg></span>
+        Waitlist
+      </a>
+      <div class="user-menu">
+        {{planBadge}}
+        <span class="avatar" data-initial="{{userEmail}}" aria-hidden="true"></span>
+        <span class="user-email">{{userEmail}}</span>
+        <button class="btn btn-ghost btn-sm" type="button" data-logout>Déconnexion</button>
+      </div>
+    </header>
+
+    <main class="page billing-page">
+      <a class="back-link" href="/app">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>Mes listes
+      </a>
+      <div class="dash-head">
+        <div>
+          <h1>Abonnement</h1>
+          <p class="muted" id="plan-summary">&nbsp;</p>
+        </div>
+      </div>
+
+      <div id="checkout-notice" class="notice hidden" role="status"></div>
+      <div id="billing-error" class="alert alert-error hidden" role="alert"></div>
+
+      <section class="card panel usage-panel">
+        <div class="panel-head">
+          <h2>Utilisation</h2>
+          <span class="sub" id="usage-sub"></span>
+        </div>
+        <div class="meter" id="meter" role="meter" aria-valuemin="0" aria-label="Inscrits utilisés">
+          <div class="meter-fill" id="meter-fill"></div>
+        </div>
+        <p class="meter-text" id="usage-text">&nbsp;</p>
+      </section>
+
+      <section class="plans">
+        <div class="card plan" id="plan-free">
+          <div class="plan-head">
+            <h3>Gratuit</h3>
+            <span class="plan-current hidden">Plan actuel</span>
+          </div>
+          <div class="price"><b>0 €</b><span>pour toujours</span></div>
+          <ul class="plan-features">
+            <li>Listes illimitées</li>
+            <li>100 inscrits visibles au total</li>
+            <li>Au-delà, les inscriptions sont conservées mais verrouillées</li>
+            <li>Dashboard et export CSV</li>
+          </ul>
+        </div>
+
+        <div class="card plan plan-pro" id="plan-pro">
+          <div class="plan-head">
+            <h3>Pro</h3>
+            <span class="plan-current hidden">Plan actuel</span>
+          </div>
+          <div class="price"><b>9 €</b><span>par mois · sans engagement</span></div>
+          <ul class="plan-features">
+            <li><strong>Inscrits illimités</strong></li>
+            <li>Débloque immédiatement les inscrits verrouillés</li>
+            <li>Listes illimitées</li>
+            <li>Résiliable à tout moment en un clic</li>
+          </ul>
+          <button class="btn btn-primary" type="button" id="upgrade-btn">Passer à Pro</button>
+          <button class="btn btn-ghost hidden" type="button" id="portal-btn">Gérer mon abonnement</button>
+          <p class="plan-note" id="plan-note">Paiement sécurisé par Stripe.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/common.js" defer></script>
+  <script src="/static/billing.js" defer></script>
+</body>
+</html>

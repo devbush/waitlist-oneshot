@@ -53,6 +53,10 @@ function render() {
   const week = days.slice(-7).reduce((a, d) => a + d.n, 0);
   const prevWeek = days.slice(-14, -7).reduce((a, d) => a + d.n, 0);
 
+  const locked = state.locked || 0;
+  $('locked-banner').classList.toggle('hidden', locked === 0);
+  $('locked-title').textContent = `${fmt(locked)} inscrit${locked > 1 ? 's' : ''} verrouillé${locked > 1 ? 's' : ''} sur cette liste`;
+
   $('stat-total').textContent = fmt(total);
   $('stat-total-foot').textContent = total === 0 ? 'Votre aventure commence' : `Dernier inscrit ${relative(new Date(subscribers[0].created_at))}`;
   $('stat-today').textContent = fmt(todayN);
@@ -166,7 +170,7 @@ function renderChart(days) {
 function renderTable() {
   const { subscribers, total } = state;
   const rows = $('rows');
-  const filtered = query ? subscribers.filter((s) => s.email.includes(query)) : subscribers;
+  const filtered = query ? subscribers.filter((s) => s.email && s.email.includes(query)) : subscribers;
   $('table-count').textContent = query ? `· ${fmt(filtered.length)} sur ${fmt(total)}` : `· ${fmt(total)}`;
   $('empty').classList.toggle('hidden', total !== 0);
   $('table-wrap').classList.toggle('hidden', total === 0);
@@ -178,13 +182,14 @@ function renderTable() {
     const rank = rankOf.get(s.id);
     const cells = [
       ['num', fmt(rank)],
-      ['email', s.email],
+      [s.locked ? 'email locked' : 'email', s.locked ? '🔒 Inscrit verrouillé · plan Pro requis' : s.email],
       ['date', dateFmt.format(new Date(s.created_at))],
     ];
     for (const [cls, text] of cells) {
       const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.append(td);
     }
     const td = document.createElement('td'); td.className = 'act';
+    if (s.locked) { tr.className = 'row-locked'; tr.append(td); return tr; }
     const btn = document.createElement('button');
     btn.className = 'icon-btn'; btn.type = 'button'; btn.title = 'Retirer'; btn.setAttribute('aria-label', `Retirer ${s.email}`);
     btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>';

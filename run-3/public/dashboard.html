@@ -17,6 +17,7 @@
         Waitlist
       </a>
       <div class="user-menu">
+        {{planBadge}}
         <span class="avatar" data-initial="{{userEmail}}" aria-hidden="true"></span>
         <span class="user-email">{{userEmail}}</span>
         <button class="btn btn-ghost btn-sm" type="button" data-logout>Déconnexion</button>
@@ -57,6 +58,12 @@
       <div id="new-notice" class="notice hidden">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>
         <div><strong>Votre liste est en ligne 🎉</strong><br>Partagez le lien public ci-dessous : chaque inscription apparaîtra ici en temps réel.</div>
+      </div>
+
+      <div id="locked-banner" class="notice notice-warn hidden">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+        <div><strong id="locked-title"></strong><br>Ils sont bien enregistrés. Passez à Pro pour voir leurs emails et les exporter.</div>
+        <a class="btn btn-primary btn-sm" href="/app/billing">Passer à Pro</a>
       </div>
 
       <div class="card share">

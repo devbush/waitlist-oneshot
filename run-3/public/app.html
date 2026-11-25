@@ -17,6 +17,7 @@
         Waitlist
       </a>
       <div class="user-menu">
+        {{planBadge}}
         <span class="avatar" data-initial="{{userEmail}}" aria-hidden="true"></span>
         <span class="user-email">{{userEmail}}</span>
         <button class="btn btn-ghost btn-sm" type="button" data-logout>Déconnexion</button>
@@ -33,6 +34,15 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           Nouvelle liste
         </button>
+      </div>
+
+      <div id="plan-banner" class="card plan-banner hidden">
+        <div class="plan-banner-text">
+          <strong id="plan-banner-title"></strong>
+          <span id="plan-banner-sub"></span>
+          <div class="meter meter-sm" aria-hidden="true"><div class="meter-fill" id="plan-banner-fill"></div></div>
+        </div>
+        <a class="btn btn-primary btn-sm" href="/app/billing">Passer à Pro · 9 €/mois</a>
       </div>
 
       <div id="lists-grid" class="lists-grid">

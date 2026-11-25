@@ -20,11 +20,35 @@ function tile(l) {
   stats.append(total, week);
 
   a.append(h, p, stats);
+  if (l.locked > 0) {
+    const lock = document.createElement('div'); lock.className = 'tile-locked';
+    lock.textContent = `🔒 ${fmt(l.locked)} inscrit${l.locked > 1 ? 's' : ''} verrouillé${l.locked > 1 ? 's' : ''}`;
+    a.append(lock);
+  }
   return a;
 }
 
+function renderPlan(plan) {
+  const banner = $('plan-banner');
+  banner.classList.toggle('hidden', !plan.billingEnabled || plan.pro);
+  if (!plan.billingEnabled || plan.pro) return;
+  const shown = Math.min(plan.used, plan.limit);
+  banner.classList.toggle('warn', plan.used >= plan.limit);
+  $('plan-banner-fill').style.width = `${(shown / plan.limit) * 100}%`;
+  if (plan.locked > 0) {
+    $('plan-banner-title').textContent = `${fmt(plan.locked)} inscrit${plan.locked > 1 ? 's' : ''} verrouillé${plan.locked > 1 ? 's' : ''}`;
+    $('plan-banner-sub').textContent = `Vous avez dépassé les ${fmt(plan.limit)} inscrits du plan Gratuit. Rien n'est perdu : passez à Pro pour tout débloquer.`;
+  } else {
+    $('plan-banner-title').textContent = `${fmt(plan.used)} / ${fmt(plan.limit)} inscrits`;
+    $('plan-banner-sub').textContent = plan.used >= plan.limit
+      ? 'Limite du plan Gratuit atteinte : les prochains inscrits seront verrouillés.'
+      : 'Plan Gratuit, toutes listes confondues. Passez à Pro pour des inscrits illimités.';
+  }
+}
+
 async function load() {
-  const { lists } = await api('GET', '/api/lists');
+  const { lists, plan } = await api('GET', '/api/lists');
+  renderPlan(plan);
   const total = lists.reduce((s, l) => s + l.total, 0);
   $('lists-meta').textContent = lists.length === 0
     ? 'Commencez par créer une liste.'
