@@ -102,10 +102,30 @@
         </div>
       </section>
 
+      <section class="card panel" id="referral-panel">
+        <div class="panel-head">
+          <h2>Parrainage</h2>
+          <span class="sub" id="ref-rule"></span>
+        </div>
+        <div class="ref-summary">
+          <div><b id="ref-referred">0</b><span>inscrits venus via un parrain</span></div>
+          <div><b id="ref-share">0 %</b><span>des inscriptions</span></div>
+          <div><b id="ref-active">0</b><span>parrains actifs</span></div>
+        </div>
+        <h3 class="mini-title">Meilleurs parrains</h3>
+        <ol id="top-referrers" class="top-list"></ol>
+        <p id="top-empty" class="muted-sm">Aucun parrainage pour l'instant. Après son inscription, chaque personne reçoit un lien personnel à partager.</p>
+      </section>
+
       <section class="card panel">
         <div class="panel-head">
           <h2>Inscrits <span class="sub" id="table-count"></span></h2>
           <div class="toolbar">
+            <label class="sr-only" for="sort">Trier</label>
+            <select class="input select" id="sort">
+              <option value="recent">Plus récents</option>
+              <option value="rank">Ordre de la liste</option>
+            </select>
             <div class="search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
               <input class="input" id="search" type="search" placeholder="Rechercher un email" aria-label="Rechercher un email">
@@ -119,7 +139,7 @@
         </div>
         <div class="table-wrap" id="table-wrap">
           <table>
-            <thead><tr><th>#</th><th>Email</th><th>Inscrit le</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th title="Place dans la liste, parrainages compris">Rang</th><th>Email</th><th>Filleuls</th><th>Parrain</th><th>Inscrit le</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody id="rows"></tbody>
           </table>
         </div>
@@ -137,6 +157,11 @@
       <div class="field">
         <label for="edit-description">Description</label>
         <textarea class="textarea" id="edit-description" name="description" maxlength="1000"></textarea>
+      </div>
+      <div class="field">
+        <label for="edit-boost">Places gagnées par filleul</label>
+        <input class="input input-narrow" id="edit-boost" name="referral_boost" type="number" min="0" max="1000" step="1" inputmode="numeric">
+        <span class="hint">Chaque personne inscrite avec le lien d'un parrain le fait remonter d'autant de places. 0 pour désactiver le bonus.</span>
       </div>
       <div id="edit-error" class="alert alert-error hidden" role="alert"></div>
       <div class="row">

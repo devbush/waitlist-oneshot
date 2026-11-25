@@ -80,6 +80,22 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_lists_user ON lists(user_id, id)');
   for (const [name, type] of Object.entries(add)) if (!cols.has(name)) db.exec(`ALTER TABLE users ADD COLUMN ${name} ${type}`);
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_customer ON users(stripe_customer_id)');
 }
+// Migration : parrainage. Chaque inscrit a un code ; referred_by pointe vers son parrain.
+{
+  const subCols = new Set(db.prepare('PRAGMA table_info(subscribers)').all().map((c) => c.name));
+  if (!subCols.has('ref_code')) db.exec('ALTER TABLE subscribers ADD COLUMN ref_code TEXT');
+  if (!subCols.has('referred_by')) db.exec('ALTER TABLE subscribers ADD COLUMN referred_by INTEGER REFERENCES subscribers(id) ON DELETE SET NULL');
+  const listCols = new Set(db.prepare('PRAGMA table_info(lists)').all().map((c) => c.name));
+  if (!listCols.has('referral_boost')) db.exec('ALTER TABLE lists ADD COLUMN referral_boost INTEGER NOT NULL DEFAULT 5');
+  const setCode = db.prepare('UPDATE subscribers SET ref_code = ? WHERE id = ?');
+  for (const { id } of db.prepare('SELECT id FROM subscribers WHERE ref_code IS NULL').all()) setCode.run(newRefCode(), id);
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_ref_code ON subscribers(ref_code)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_subscribers_referred_by ON subscribers(referred_by)');
+}
+
+function newRefCode() {
+  return randomBytes(6).toString('base64url'); // 8 caractères, ~2^48 combinaisons
+}
 
 const q = {
   // Comptes & sessions
@@ -108,14 +124,32 @@ const q = {
     FROM lists l LEFT JOIN subscribers s ON s.list_id = l.id
     WHERE l.user_id = ? GROUP BY l.id ORDER BY l.id DESC`),
   claimList: db.prepare('UPDATE lists SET user_id = ? WHERE id = ? AND user_id IS NULL'),
-  updateList: db.prepare('UPDATE lists SET title = ?, description = ? WHERE id = ?'),
+  updateList: db.prepare('UPDATE lists SET title = ?, description = ?, referral_boost = ? WHERE id = ?'),
   deleteList: db.prepare('DELETE FROM lists WHERE id = ?'),
   // Inscrits
-  insertSub: db.prepare('INSERT INTO subscribers (list_id, email, created_at) VALUES (?, ?, ?) ON CONFLICT (list_id, email) DO NOTHING'),
-  subByEmail: db.prepare('SELECT id FROM subscribers WHERE list_id = ? AND email = ?'),
-  position: db.prepare('SELECT COUNT(*) AS n FROM subscribers WHERE list_id = ? AND id <= ?'),
+  insertSub: db.prepare('INSERT INTO subscribers (list_id, email, created_at, ref_code, referred_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT (list_id, email) DO NOTHING'),
+  subByEmail: db.prepare('SELECT id, ref_code FROM subscribers WHERE list_id = ? AND email = ?'),
+  subByCode: db.prepare('SELECT id, list_id, ref_code FROM subscribers WHERE ref_code = ?'),
+  // Classement : ordre d'arrivée, moins `boost` places par filleul (à égalité, le plus ancien d'abord).
+  ranking: db.prepare(`
+    WITH base AS (
+      SELECT x.id, x.email, x.created_at, x.ref_code, x.referred_by,
+             ROW_NUMBER() OVER (ORDER BY x.id) AS arrival,
+             (SELECT COUNT(*) FROM subscribers r WHERE r.referred_by = x.id) AS referrals
+      FROM subscribers x WHERE x.list_id = :list
+    )
+    SELECT *, ROW_NUMBER() OVER (ORDER BY arrival - :boost * referrals, id) AS position
+    FROM base ORDER BY id DESC`),
+  rankOne: db.prepare(`
+    WITH base AS (
+      SELECT x.id,
+             ROW_NUMBER() OVER (ORDER BY x.id) - :boost * (SELECT COUNT(*) FROM subscribers r WHERE r.referred_by = x.id) AS score
+      FROM subscribers x WHERE x.list_id = :list
+    ), me AS (SELECT id, score FROM base WHERE id = :id)
+    SELECT (SELECT COUNT(*) FROM base, me WHERE base.score < me.score OR (base.score = me.score AND base.id < me.id)) + 1 AS position,
+           (SELECT COUNT(*) FROM subscribers WHERE referred_by = :id) AS referrals,
+           (SELECT COUNT(*) FROM base) AS total`),
   count: db.prepare('SELECT COUNT(*) AS n FROM subscribers WHERE list_id = ?'),
-  subs: db.prepare('SELECT id, email, created_at FROM subscribers WHERE list_id = ? ORDER BY id DESC'),
   deleteSub: db.prepare('DELETE FROM subscribers WHERE id = ? AND list_id = ?'),
 };
 
@@ -472,17 +506,39 @@ const renderAppPage = async (name, user) => fill(await file(name), {
 
 // ---------------------------------------------------------------- API
 // Les inscrits verrouillés (plan gratuit au-delà du quota) sont renvoyés sans leur email.
+const rankedSubscribers = (list) => q.ranking.all({ list: list.id, boost: list.referral_boost });
+
 function dashboardPayload(list, user) {
   const plan = planOf(user);
-  const subscribers = q.subs.all(list.id).map((s) =>
-    isLocked(plan, s.id) ? { id: s.id, email: null, created_at: s.created_at, locked: true } : s);
+  const rows = rankedSubscribers(list);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const subscribers = rows.map((s) => {
+    const locked = isLocked(plan, s.id);
+    const parent = s.referred_by ? byId.get(s.referred_by) : null;
+    return {
+      id: s.id,
+      email: locked ? null : s.email,
+      created_at: s.created_at,
+      position: s.position,
+      referrals: s.referrals,
+      referred_by: parent ? (isLocked(plan, parent.id) ? { locked: true } : { email: parent.email }) : null,
+      ...(locked ? { locked: true } : {}),
+    };
+  });
   return {
-    list: { slug: list.slug, title: list.title, description: list.description, created_at: list.created_at },
+    list: { slug: list.slug, title: list.title, description: list.description, created_at: list.created_at, referral_boost: list.referral_boost },
     total: subscribers.length,
     locked: subscribers.filter((s) => s.locked).length,
+    referred: subscribers.filter((s) => s.referred_by).length,
     subscribers,
     plan: publicPlan(plan),
   };
+}
+
+// Statut public d'un inscrit (place, filleuls, code) : le code de parrainage sert d'identifiant.
+function referralStatus(list, sub) {
+  const r = q.rankOne.get({ list: list.id, boost: list.referral_boost, id: sub.id });
+  return { position: r.position, total: r.total, referrals: r.referrals, ref_code: sub.ref_code, boost: list.referral_boost };
 }
 
 function csvCell(v) {
@@ -491,11 +547,18 @@ function csvCell(v) {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-function readListFields(body) {
+function readListFields(body, current = { referral_boost: 5 }) {
   const title = cleanText(body.title, LIMITS.title);
   const description = cleanText(body.description, LIMITS.description);
   if (!title) throw Object.assign(new Error('Le titre est obligatoire.'), { status: 400 });
-  return { title, description };
+  let boost = current.referral_boost;
+  if (body.referral_boost !== undefined) {
+    boost = Number(body.referral_boost);
+    if (!Number.isInteger(boost) || boost < 0 || boost > 1000) {
+      throw Object.assign(new Error('Les places gagnées par filleul doivent être un nombre entier entre 0 et 1000.'), { status: 400 });
+    }
+  }
+  return { title, description, referral_boost: boost };
 }
 
 async function handleAuth(req, res, action) {
@@ -558,14 +621,28 @@ async function handleApi(req, res, url) {
     if (!list) return json(res, 404, { error: 'Liste introuvable.' });
     if (rateLimited(`sub:${clientIp(req)}`, 20, 10 * 60_000)) return json(res, 429, { error: 'Trop de tentatives. Patientez quelques minutes.' });
     const body = await readJson(req);
-    if (body.website) return json(res, 200, { ok: true, position: null }); // pot de miel anti-bot
+    if (body.website) return json(res, 200, { ok: true, position: null, ref_code: null }); // pot de miel anti-bot
     const email = cleanEmail(body.email);
     if (!EMAIL_RE.test(email)) return json(res, 400, { error: 'Adresse email invalide.' });
-    const result = q.insertSub.run(list.id, email, new Date().toISOString());
-    const already = result.changes === 0;
-    const id = already ? q.subByEmail.get(list.id, email).id : Number(result.lastInsertRowid);
-    const position = q.position.get(list.id, id).n;
-    return json(res, already ? 200 : 201, { ok: true, already, position });
+    // Parrain : uniquement un code valide appartenant à la même liste
+    const parent = typeof body.ref === 'string' && body.ref ? q.subByCode.get(body.ref.slice(0, 32)) : null;
+    const referredBy = parent && parent.list_id === list.id ? parent.id : null;
+    let result;
+    for (let attempt = 0; ; attempt++) {
+      try { result = q.insertSub.run(list.id, email, new Date().toISOString(), newRefCode(), referredBy); break; }
+      catch (e) { if (attempt < 3 && String(e.message).includes('ref_code')) continue; throw e; } // collision de code (très improbable)
+    }
+    const already = result.changes === 0; // déjà inscrit : son parrain d'origine est conservé
+    const sub = q.subByEmail.get(list.id, email);
+    return json(res, already ? 200 : 201, { ok: true, already, ...referralStatus(list, sub) });
+  }
+
+  // GET /api/w/:slug/status?code=… — place et filleuls d'un inscrit (page publique, au retour)
+  if (req.method === 'GET' && parts.length === 4 && parts[1] === 'w' && parts[3] === 'status') {
+    const list = q.listBySlug.get(parts[2]);
+    const sub = list && q.subByCode.get(String(url.searchParams.get('code') || '').slice(0, 32));
+    if (!list || !sub || sub.list_id !== list.id) return json(res, 404, { error: 'Inscription introuvable.' });
+    return json(res, 200, referralStatus(list, sub));
   }
 
   // ---- Tout ce qui suit exige une session
@@ -613,9 +690,9 @@ async function handleApi(req, res, url) {
   if (parts.length === 3) {
     if (req.method === 'GET') return json(res, 200, dashboardPayload(list, user));
     if (req.method === 'PATCH') {
-      const { title, description } = readListFields(await readJson(req));
-      q.updateList.run(title, description, list.id);
-      return json(res, 200, dashboardPayload({ ...list, title, description }, user));
+      const { title, description, referral_boost } = readListFields(await readJson(req), list);
+      q.updateList.run(title, description, referral_boost, list.id);
+      return json(res, 200, dashboardPayload({ ...list, title, description, referral_boost }, user));
     }
     if (req.method === 'DELETE') {
       q.deleteList.run(list.id);
@@ -630,8 +707,14 @@ async function handleApi(req, res, url) {
 
   if (parts.length === 4 && parts[3] === 'export.csv' && req.method === 'GET') {
     const plan = planOf(user);
-    const rows = q.subs.all(list.id).reverse().filter((r) => !isLocked(plan, r.id));
-    const csv = ['"#","email","inscrit_le"', ...rows.map((r, i) => [i + 1, r.email, r.created_at].map(csvCell).join(','))].join('\r\n');
+    const all = rankedSubscribers(list);
+    const emailOf = new Map(all.map((r) => [r.id, isLocked(plan, r.id) ? '' : r.email]));
+    const rows = all.filter((r) => !isLocked(plan, r.id)).sort((a, b) => a.position - b.position);
+    const link = `${appUrl(req)}/w/${list.slug}?ref=`;
+    const header = ['rang', 'email', 'filleuls', 'parrain', 'inscrit_le', 'lien_parrainage'].map(csvCell).join(',');
+    const csv = [header, ...rows.map((r) => [
+      r.position, r.email, r.referrals, r.referred_by ? emailOf.get(r.referred_by) || '' : '', r.created_at, link + r.ref_code,
+    ].map(csvCell).join(','))].join('\r\n');
     return send(res, 200, '﻿' + csv, 'text/csv; charset=utf-8', {
       'Content-Disposition': `attachment; filename="${list.slug}-inscrits.csv"`,
       'Cache-Control': 'no-store',

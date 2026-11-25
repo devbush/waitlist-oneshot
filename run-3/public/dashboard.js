@@ -5,6 +5,7 @@ const DAYS = 30;
 
 let state = null;
 let query = '';
+let sortMode = 'recent';
 
 // ---------------------------------------------------------------- Données
 const call = (method = 'GET', path = '', body) => api(method, base + path, body);
@@ -65,6 +66,7 @@ function render() {
   $('stat-week-foot').textContent = trend(week, prevWeek);
 
   renderChart(days);
+  renderReferrals();
   renderTable();
 }
 
@@ -167,22 +169,52 @@ function renderChart(days) {
   box.prepend(svg);
 }
 
+function renderReferrals() {
+  const { subscribers, total, referred, list } = state;
+  const boost = list.referral_boost;
+  $('ref-rule').textContent = boost > 0
+    ? `+${fmt(boost)} ${boost > 1 ? 'places' : 'place'} par filleul`
+    : 'Bonus de places désactivé';
+  $('ref-referred').textContent = fmt(referred);
+  $('ref-share').textContent = total ? `${Math.round((referred / total) * 100)} %` : '0 %';
+  const referrers = subscribers.filter((s) => s.referrals > 0).sort((a, b) => b.referrals - a.referrals || a.position - b.position);
+  $('ref-active').textContent = fmt(referrers.length);
+
+  const top = referrers.slice(0, 5);
+  const max = top[0]?.referrals || 1;
+  $('top-empty').classList.toggle('hidden', top.length > 0);
+  $('top-referrers').replaceChildren(...top.map((s) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span'); name.className = 'top-name';
+    name.textContent = s.locked ? '🔒 Inscrit verrouillé' : s.email;
+    const bar = document.createElement('span'); bar.className = 'top-bar';
+    const fill = document.createElement('i'); fill.style.width = `${(s.referrals / max) * 100}%`;
+    bar.append(fill);
+    const n = document.createElement('span'); n.className = 'top-n';
+    n.textContent = `${fmt(s.referrals)} ${s.referrals > 1 ? 'filleuls' : 'filleul'} · #${fmt(s.position)}`;
+    li.append(name, bar, n);
+    return li;
+  }));
+}
+
 function renderTable() {
-  const { subscribers, total } = state;
+  const { total } = state;
   const rows = $('rows');
+  const subscribers = sortMode === 'rank' ? [...state.subscribers].sort((a, b) => a.position - b.position) : state.subscribers;
   const filtered = query ? subscribers.filter((s) => s.email && s.email.includes(query)) : subscribers;
   $('table-count').textContent = query ? `· ${fmt(filtered.length)} sur ${fmt(total)}` : `· ${fmt(total)}`;
   $('empty').classList.toggle('hidden', total !== 0);
   $('table-wrap').classList.toggle('hidden', total === 0);
 
   const dateFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const rankOf = new Map(subscribers.map((s, i) => [s.id, subscribers.length - i]));
   rows.replaceChildren(...filtered.map((s) => {
     const tr = document.createElement('tr');
-    const rank = rankOf.get(s.id);
+    const parent = !s.referred_by ? '—' : s.referred_by.locked ? '🔒 verrouillé' : s.referred_by.email;
     const cells = [
-      ['num', fmt(rank)],
+      ['num', `#${fmt(s.position)}`],
       [s.locked ? 'email locked' : 'email', s.locked ? '🔒 Inscrit verrouillé · plan Pro requis' : s.email],
+      [s.referrals > 0 ? 'refs has' : 'refs', s.referrals > 0 ? `${fmt(s.referrals)}` : '—'],
+      [s.referred_by ? 'parent' : 'parent none', parent],
       ['date', dateFmt.format(new Date(s.created_at))],
     ];
     for (const [cls, text] of cells) {
@@ -200,7 +232,7 @@ function renderTable() {
 
   if (filtered.length === 0 && total > 0) {
     const tr = document.createElement('tr');
-    const td = document.createElement('td'); td.colSpan = 4; td.className = 'date'; td.textContent = 'Aucun email ne correspond à la recherche.';
+    const td = document.createElement('td'); td.colSpan = 6; td.className = 'date'; td.textContent = 'Aucun email ne correspond à la recherche.';
     tr.append(td); rows.append(tr);
   }
 }
@@ -222,12 +254,14 @@ async function removeSub(s) {
 
 $('copy-public').addEventListener('click', () => copy($('public-url').textContent, 'Lien public copié'));
 $('search').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); if (state) renderTable(); });
+$('sort').addEventListener('change', (e) => { sortMode = e.target.value; if (state) renderTable(); });
 
 const dialog = $('edit-dialog');
 $('edit-btn').addEventListener('click', () => {
   if (!state) return;
   $('edit-title').value = state.list.title;
   $('edit-description').value = state.list.description;
+  $('edit-boost').value = state.list.referral_boost;
   $('edit-error').classList.add('hidden');
   dialog.showModal();
 });
@@ -238,7 +272,8 @@ $('edit-form').addEventListener('submit', async (e) => {
   const err = $('edit-error');
   if (!title) { err.textContent = 'Le titre est obligatoire.'; err.classList.remove('hidden'); return; }
   try {
-    state = await call('PATCH', '', { title, description: $('edit-description').value });
+    const boost = $('edit-boost').value.trim();
+    state = await call('PATCH', '', { title, description: $('edit-description').value, referral_boost: boost === '' ? undefined : Number(boost) });
     render();
     dialog.close();
     toast('Modifications enregistrées');

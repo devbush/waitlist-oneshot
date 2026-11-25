@@ -16,10 +16,10 @@
     <main class="public-main">
       <div class="card public-card">
         <div id="join-view">
-          <span class="eyebrow"><span class="dot"></span>Bientôt disponible</span>
+          <span class="eyebrow" id="eyebrow"><span class="dot"></span>Bientôt disponible</span>
           <h1>{{title}}</h1>
           <p class="desc">{{description}}</p>
-          <form id="join-form" class="join-form" data-slug="{{slug}}" novalidate>
+          <form id="join-form" class="join-form" data-slug="{{slug}}" data-title="{{title}}" novalidate>
             <label class="sr-only" for="email">Adresse email</label>
             <input class="input" id="email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="vous@exemple.com" required>
             <div class="hp" aria-hidden="true"><input name="website" tabindex="-1" autocomplete="off"></div>
@@ -36,12 +36,35 @@
           <div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg></div>
           <h2 id="success-title">Vous êtes sur la liste !</h2>
           <p id="success-text">Merci pour votre intérêt. On vous écrit dès que <strong>{{title}}</strong> est prêt.</p>
-          <div id="position" class="position hidden"><small>Votre place</small><b id="position-n"></b></div>
+
+          <div class="status-row">
+            <div class="position"><small>Votre place</small><b id="position-n">–</b><span id="position-of"></span></div>
+            <div class="position position-alt"><small>Amis parrainés</small><b id="ref-count">0</b><span id="ref-gain"></span></div>
+          </div>
+
+          <div id="referral" class="referral">
+            <h3 id="referral-title">Montez dans la liste 🚀</h3>
+            <p id="referral-text"></p>
+            <div class="ref-link">
+              <code id="ref-url"></code>
+              <button class="btn btn-primary btn-sm" type="button" id="copy-ref">Copier le lien</button>
+            </div>
+            <div class="share-row">
+              <button class="share-btn" type="button" id="share-native" hidden>Partager…</button>
+              <a class="share-btn" id="share-wa" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+              <a class="share-btn" id="share-x" target="_blank" rel="noopener noreferrer">X</a>
+              <a class="share-btn" id="share-li" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+              <a class="share-btn" id="share-mail">Email</a>
+            </div>
+          </div>
+
+          <button class="link-btn" type="button" id="not-me">Ce n'est pas vous ? Inscrire une autre adresse</button>
         </div>
       </div>
     </main>
     <footer class="powered">Propulsé par <a href="/">Waitlist</a></footer>
   </div>
+  <div class="toast" id="toast" role="status"></div>
   <script src="/static/waitlist.js" defer></script>
 </body>
 </html>

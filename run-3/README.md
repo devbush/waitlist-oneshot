@@ -20,7 +20,7 @@ npm run dev        # avec rechargement automatique
 | `/app` | connecté | Mes listes (total et inscrits de la semaine par liste), création |
 | `/app/billing` | connecté | Abonnement : utilisation, passage à Pro, gestion |
 | `/app/lists/<slug>` | propriétaire | Dashboard : stats, graphique 30 jours, recherche, suppression d'inscrits, export CSV, modification, suppression de la liste |
-| `/w/<slug>` | public | Page d'inscription à partager |
+| `/w/<slug>` | public | Page d'inscription à partager (`?ref=<code>` : arrivée via un parrain) |
 
 Chaque compte ne voit et ne modifie **que ses propres listes** : une liste d'un autre compte répond « introuvable » (404), aussi bien dans les pages que dans l'API.
 
@@ -35,6 +35,18 @@ Chaque compte ne voit et ne modifie **que ses propres listes** : une liste d'un 
 Elles n'ont pas de propriétaire. Elles sont rattachées au premier compte qui :
 - ouvre leur ancien lien secret `/d/<jeton>` une fois connecté ;
 - ou se connecte depuis le navigateur qui les avait créées (les jetons mémorisés localement sont rattachés automatiquement).
+
+## Parrainage
+
+Après son inscription, chaque personne reçoit un **lien personnel** (`/w/<slug>?ref=<code>`) avec des boutons de partage (copier, WhatsApp, X, LinkedIn, email, partage natif sur mobile).
+
+- **Classement** : chaque inscrit qui arrive avec un lien fait **gagner N places** à son parrain (5 par défaut, réglable par liste dans « Modifier », 0 pour désactiver le bonus). Concrètement, la place est calculée selon `ordre d'arrivée − N × nombre de filleuls` ; à égalité, le plus ancien passe devant.
+- **Suivi** : de retour sur la page publique (même navigateur), l'inscrit retrouve sa place, son nombre de filleuls et son lien. Ressaisir son email affiche aussi ces informations.
+- **Règles** : seul un code de la même liste compte ; une personne déjà inscrite ne change pas de parrain ; supprimer un filleul retire le bonus correspondant à son parrain (utile contre les inscriptions bidon).
+- **Dashboard** : rang, filleuls et parrain de chaque inscrit, tri « Plus récents » / « Ordre de la liste », part des inscriptions venues d'un parrainage et top 5 des parrains.
+- **Export CSV** : trié par rang, avec les colonnes `rang, email, filleuls, parrain, inscrit_le, lien_parrainage`.
+
+> Les emails ne sont pas vérifiés : quelqu'un peut gonfler son classement avec de fausses adresses (la limite de 20 inscriptions / 10 min par IP freine, sans empêcher). Surveillez le top des parrains et supprimez les filleuls suspects.
 
 ## Plans et paiement (Stripe)
 
