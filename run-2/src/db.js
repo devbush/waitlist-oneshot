@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { FREE_LIMIT, isPro } from './plans.js';
+import { FREE_LIMIT, isPro, REFERRAL_BOOST } from './plans.js';
 
 export { FREE_LIMIT, isPro };
 
@@ -66,6 +66,44 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_lists_user ON lists(user_id, created_at)
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_customer ON users(stripe_customer_id)');
 }
 
+// Migration : parrainage.
+//   ref_code    code public du lien de parrainage de l'inscrit (/w/<liste>?ref=<code>)
+//   referred_by inscrit qui l'a parrainé
+//   ip_hash     HMAC de l'IP d'inscription (jamais l'IP en clair) : sert uniquement à ne pas
+//               compter les parrainages faits depuis la même connexion que le parrain.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(subscribers)').all().map((c) => c.name));
+  if (!cols.has('ref_code')) db.exec('ALTER TABLE subscribers ADD COLUMN ref_code TEXT');
+  if (!cols.has('referred_by')) {
+    db.exec('ALTER TABLE subscribers ADD COLUMN referred_by INTEGER REFERENCES subscribers(id) ON DELETE SET NULL');
+  }
+  if (!cols.has('ip_hash')) db.exec('ALTER TABLE subscribers ADD COLUMN ip_hash TEXT');
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_ref ON subscribers(ref_code);
+    CREATE INDEX IF NOT EXISTS idx_subscribers_referred_by ON subscribers(referred_by);
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  `);
+  // Les inscrits existants reçoivent aussi un code de parrainage.
+  const missing = db.prepare('SELECT id FROM subscribers WHERE ref_code IS NULL').all();
+  const setCode = db.prepare('UPDATE subscribers SET ref_code = ? WHERE id = ?');
+  for (const { id } of missing) setCode.run(newRefCode(), id);
+}
+
+function newRefCode() {
+  // 12 caractères (2^72 possibilités) : une collision, qui ferait ignorer l'insertion, est exclue en pratique.
+  return crypto.randomBytes(9).toString('base64url');
+}
+
+// Secret propre à cette installation pour hacher les IP (créé une fois, stocké en base).
+const IP_SECRET = (() => {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'ip_secret'").get();
+  if (row) return row.value;
+  const value = crypto.randomBytes(32).toString('hex');
+  db.prepare("INSERT INTO meta (key, value) VALUES ('ip_secret', ?)").run(value);
+  return value;
+})();
+export const hashIp = (ip) => crypto.createHmac('sha256', IP_SECRET).update(String(ip)).digest('hex').slice(0, 32);
+
 
 
 const q = {
@@ -118,10 +156,23 @@ const q = {
 
   // inscrits
   count: db.prepare('SELECT COUNT(*) AS n FROM subscribers WHERE list_id = ?'),
-  insertSub: db.prepare('INSERT OR IGNORE INTO subscribers (list_id, email, created_at, locked) VALUES (?, ?, ?, ?)'),
-  subs: db.prepare(
-    'SELECT id, email, created_at, locked FROM subscribers WHERE list_id = ? ORDER BY created_at DESC, id DESC'
+  insertSub: db.prepare(
+    'INSERT OR IGNORE INTO subscribers (list_id, email, created_at, locked, ref_code, referred_by, ip_hash) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ),
+  refOwner: db.prepare('SELECT id FROM subscribers WHERE list_id = ? AND ref_code = ?'),
+  // Classement : rang d'inscription, moins REFERRAL_BOOST places par parrainage valide.
+  // Un parrainage est valide s'il vient d'une autre IP que celle du parrain ; plusieurs filleuls
+  // depuis la même IP ne comptent qu'une fois (COUNT DISTINCT).
+  ranking: db.prepare(`
+    WITH base AS (
+      SELECT s.id, s.email, s.created_at, s.locked, s.ref_code, s.referred_by,
+             ROW_NUMBER() OVER (ORDER BY s.created_at, s.id) AS signup_rank,
+             (SELECT COUNT(DISTINCT c.ip_hash) FROM subscribers c
+               WHERE c.referred_by = s.id AND c.ip_hash IS NOT NULL AND c.ip_hash IS NOT s.ip_hash) AS referrals
+      FROM subscribers s WHERE s.list_id = ?
+    )
+    SELECT *, ROW_NUMBER() OVER (ORDER BY signup_rank - ? * referrals, signup_rank) AS position
+    FROM base ORDER BY position`),
   deleteSub: db.prepare('DELETE FROM subscribers WHERE id = ? AND list_id = ?'),
 };
 
@@ -181,15 +232,31 @@ export const deleteList = (id) => q.deleteList.run(id);
 /* ----------------------------------------------------------------- inscrits */
 
 export const countSubscribers = (listId) => q.count.get(listId).n;
-export const getSubscribers = (listId) => q.subs.all(listId);
+
+/** Inscrits de la liste, triés par position (parrainages inclus). */
+export const getSubscribers = (listId) => q.ranking.all(listId, REFERRAL_BOOST);
+
+/** Position d'un inscrit dans sa liste, ou null s'il n'existe pas. */
+export function getSubscriberStatus(listId, email) {
+  const rows = getSubscribers(listId);
+  const me = rows.find((r) => r.email === email);
+  return me ? { position: me.position, total: rows.length, referrals: me.referrals, refCode: me.ref_code } : null;
+}
+
+/** Vrai si ce code de parrainage appartient bien à un inscrit de cette liste. */
+export const isValidRefCode = (listId, code) => Boolean(code && q.refOwner.get(listId, code));
 export const deleteSubscriber = (listId, id) => q.deleteSub.run(id, listId);
 
-/** @returns {boolean} true si nouvel inscrit, false s'il était déjà inscrit */
-export function addSubscriber(listId, email) {
+/**
+ * @param {{refCode?: string, ipHash?: string}} opts code du parrain (même liste uniquement) et IP hachée
+ * @returns {boolean} true si nouvel inscrit, false s'il était déjà inscrit
+ */
+export function addSubscriber(listId, email, { refCode = null, ipHash = null } = {}) {
   // node:sqlite est synchrone : le comptage et l'insertion ne peuvent pas être entrelacés.
   const owner = q.listOwner.get(listId); // undefined pour une ancienne liste sans propriétaire
   const locked = owner && !isPro(owner) && q.usage.get(owner.id).total >= FREE_LIMIT ? 1 : 0;
-  return q.insertSub.run(listId, email, new Date().toISOString(), locked).changes > 0;
+  const referrer = refCode ? q.refOwner.get(listId, refCode) : null; // code d'une autre liste : ignoré
+  return q.insertSub.run(listId, email, new Date().toISOString(), locked, newRefCode(), referrer?.id ?? null, ipHash).changes > 0;
 }
 
 /* ------------------------------------------------------------- abonnement */

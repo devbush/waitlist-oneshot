@@ -98,6 +98,20 @@ function sameOrigin(req) {
 /** N'accepte que des chemins internes pour la redirection après connexion. */
 const safeNext = (v) => (typeof v === 'string' && /^\/(?![/\\])[\w\-./?=&%]*$/.test(v) ? v : '');
 
+/**
+ * IP du visiteur. Derrière un reverse proxy (TRUST_PROXY=1), on prend la dernière adresse
+ * de X-Forwarded-For, c'est-à-dire celle ajoutée par notre proxy (les précédentes sont falsifiables).
+ */
+function clientIp(req) {
+  if (process.env.TRUST_PROXY === '1') {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (fwd.length) return fwd.at(-1);
+  }
+  return req.socket.remoteAddress || 'unknown';
+}
+
+const REF_RE = /^[A-Za-z0-9_-]{12}$/;
+
 /* Limiteur à fenêtre glissante, par IP : record() compte un événement, blocked() teste le seuil. */
 function limiter(max, windowMs) {
   const hits = new Map();
@@ -105,7 +119,7 @@ function limiter(max, windowMs) {
     const now = Date.now();
     for (const [k, ts] of hits) if (ts.every((t) => now - t >= windowMs)) hits.delete(k);
   }, windowMs).unref();
-  const ipOf = (req) => req.socket.remoteAddress || 'unknown';
+  const ipOf = clientIp;
   const recent = (req) => (hits.get(ipOf(req)) || []).filter((t) => Date.now() - t < windowMs);
   return {
     blocked: (req) => recent(req).length >= max,
@@ -153,24 +167,35 @@ async function handle(req, res) {
         ? json(res, 404, { error: 'not_found' })
         : html(res, views.notFound('Cette liste d’attente n’existe pas ou a été supprimée.'), 404);
     }
+    // Code de parrainage : seulement s'il appartient à un inscrit de cette liste.
+    const refParam = m === 'GET' ? url.searchParams.get('ref') : null;
+    const validRef = (code) => (typeof code === 'string' && REF_RE.test(code) && db.isValidRefCode(list.id, code) ? code : null);
+
     if (m === 'GET') {
-      const status = url.searchParams.get('status');
-      return html(res, views.publicPage({ list, count: db.countSubscribers(list.id), status }));
+      return html(res, views.publicPage({ list, count: db.countSubscribers(list.id), ref: validRef(refParam) }));
     }
     if (m === 'POST') {
       const body = await readBody(req);
       const email = str(body.email, 254).toLowerCase();
-      const respond = (status, code) =>
-        wantsJson(req)
-          ? json(res, code, { status, count: db.countSubscribers(list.id) })
-          : redirect(res, `/w/${list.slug}?status=${status}`);
+      const ref = validRef(body.ref);
+      // Sans JavaScript, on affiche directement le résultat (pas de redirection) : la position
+      // n'est ainsi jamais exposée dans une URL.
+      const respond = (status, code, me = null) => {
+        const count = db.countSubscribers(list.id);
+        const mine = me && { ...me, refUrl: `${baseUrl(req)}/w/${list.slug}?ref=${me.refCode}` };
+        if (wantsJson(req)) {
+          return json(res, code, { status, count, ...(mine && { position: mine.position, total: mine.total, referrals: mine.referrals, refUrl: mine.refUrl }) });
+        }
+        return html(res, views.publicPage({ list, count, status, me: mine, ref }), code);
+      };
 
       if (str(body.website, 200)) return respond('ok', 200); // honeypot : on fait semblant
       if (subscribeLimit.blocked(req)) return respond('limit', 429);
       subscribeLimit.record(req);
       if (!EMAIL_RE.test(email)) return respond('invalid', 400);
-      const isNew = db.addSubscriber(list.id, email);
-      return respond(isNew ? 'ok' : 'already', isNew ? 201 : 200);
+      const isNew = db.addSubscriber(list.id, email, { refCode: ref, ipHash: db.hashIp(clientIp(req)) });
+      // « already » : la personne revient voir sa position en ré-entrant son email.
+      return respond(isNew ? 'ok' : 'already', isNew ? 201 : 200, db.getSubscriberStatus(list.id, email));
     }
   }
 
@@ -275,8 +300,12 @@ async function handle(req, res) {
     }
 
     if (sub === '/export.csv' && m === 'GET') {
-      const rows = db.getSubscribers(list.id).filter((r) => !r.locked).reverse(); // jamais les emails verrouillés
-      const csv = ['email,inscrit_le', ...rows.map((r) => `${csvCell(r.email)},${csvCell(r.created_at)}`)].join('\r\n');
+      // Ordre de la file (parrainages inclus) ; jamais les emails verrouillés.
+      const rows = db.getSubscribers(list.id).filter((r) => !r.locked);
+      const csv = [
+        'position,email,parrainages,inscrit_le',
+        ...rows.map((r) => [r.position, r.email, r.referrals, r.created_at].map(csvCell).join(',')),
+      ].join('\r\n');
       return send(res, 200, '﻿' + csv, 'text/csv; charset=utf-8', {
         'Content-Disposition': `attachment; filename="inscrits-${list.slug}.csv"`,
         'Cache-Control': 'no-store',

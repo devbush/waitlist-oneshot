@@ -20,6 +20,7 @@ Les variables d’environnement peuvent être mises dans un fichier `.env` (mod�
 | `PORT`     | `3000`               | Port HTTP                                                               |
 | `DB_PATH`  | `data/waitlist.db`   | Fichier SQLite                                                          |
 | `BASE_URL` | déduit de la requête | URL publique (liens affichés, retours Stripe, cookie `Secure` si elle commence par `https:`) |
+| `TRUST_PROXY` | — | Mettre `1` derrière un reverse proxy (Nginx, Render, Fly…) pour lire l’IP réelle dans `X-Forwarded-For`. **Indispensable en production derrière un proxy** : sinon tous les visiteurs ont la même IP, les parrainages ne comptent plus et la limite d’inscriptions s’applique à tout le monde à la fois |
 | `STRIPE_SECRET_KEY` | — | Clé secrète Stripe. Sans elle, le bouton « Passer en Pro » est désactivé |
 | `STRIPE_WEBHOOK_SECRET` | — | Secret de signature du webhook (`whsec_…`) |
 | `STRIPE_PRICE_ID` | — | Prix à utiliser. Par défaut : un prix « Waitlist Pro » à 9 €/mois est créé automatiquement (lookup key `waitlist_pro_monthly`) |
@@ -37,6 +38,15 @@ Les variables d’environnement peuvent être mises dans un fichier `.env` (mod�
 | `/w/<slug>` | public | Page d'inscription à partager (fonctionne aussi sans JavaScript) |
 
 Une liste appartenant à un autre compte renvoie un 404, ce qui ne révèle même pas qu'elle existe.
+
+## Parrainage
+
+Après son inscription, chaque inscrit voit **sa position** dans la liste et reçoit **un lien de parrainage** (`/w/<liste>?ref=<code>`) avec des boutons Copier et Partager.
+
+- **Classement** : ordre d’inscription, avec **5 places gagnées par ami parrainé** (constante `REFERRAL_BOOST` dans `src/plans.js`). À égalité, le plus ancien inscrit passe devant.
+- **Retrouver sa position** : ré-entrer son email sur la page publique. Le lien de parrainage est public et ne permet pas de voir la position de son propriétaire.
+- **Anti-triche** : un parrainage ne compte que s’il vient d’une autre IP que celle du parrain, et plusieurs filleuls depuis une même IP ne comptent qu’une fois. Les IP ne sont jamais stockées en clair (HMAC avec un secret propre à l’installation). Sans confirmation d’email, quelqu’un qui dispose de plusieurs connexions peut encore tricher : le propriétaire peut retirer les inscrits suspects, et le parrain perd alors les places correspondantes.
+- **Dashboard** : les inscrits sont classés par position, avec le nombre de parrainages de chacun et le nombre d’inscrits arrivés via un lien. L’export CSV suit le même ordre (`position,email,parrainages,inscrit_le`).
 
 ## Plans
 

@@ -544,12 +544,49 @@ a.plan-pill:hover { text-decoration: none; filter: brightness(1.08); }
 .locked-chip .lock-icon { width: 12px; height: 12px; }
 a.locked-chip:hover { text-decoration: none; filter: brightness(0.97); }
 
+/* ------------------------------------------------------------- Parrainage */
+
+.invited {
+  margin-top: 26px; padding: 10px 14px; border-radius: 12px;
+  background: var(--accent-soft); color: var(--text); font-size: 14px; font-weight: 500;
+}
+.invited + .join { margin-top: 14px; }
+.join-hint { font-size: 13px; color: var(--text-3); margin-top: 2px; }
+
+.my-rank {
+  display: grid; justify-items: center; gap: 2px; margin-top: 18px; padding: 16px 28px;
+  border-radius: 16px; background: var(--surface-2); border: 1px solid var(--border);
+}
+.rank-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+.rank-value {
+  font: 800 46px/1.05 var(--font-display); letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.rank-total { font-size: 14px; color: var(--text-2); }
+
+.referral { width: 100%; display: grid; gap: 10px; margin-top: 18px; text-align: left; }
+.referral-pitch { font-size: 14.5px; color: var(--text-2); text-align: center; }
+.referral-pitch strong { color: var(--text); }
+.ref-field { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; padding: 5px 5px 5px 12px; }
+.ref-field input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; height: 34px; color: var(--text); }
+.referral-count { text-align: center; font-size: 13.5px; color: var(--text-3); }
+.referral-count strong { color: var(--accent); }
+
+/* Dashboard */
+th.refs, td.refs { width: 120px; text-align: center; }
+.ref-badge {
+  display: inline-grid; place-items: center; min-width: 28px; height: 24px; padding: 0 8px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); background: var(--accent-soft);
+}
+.stats { grid-template-columns: 1.3fr 1fr 1fr 1fr; }
+
 /* ------------------------------------------------------------ Responsive */
 
 @media (max-width: 900px) {
   .home { grid-template-columns: 1fr; gap: 36px; padding-top: 16px; }
   .lists-layout { grid-template-columns: 1fr; }
   .plans { grid-template-columns: 1fr; }
+  .stats > .stat:last-child { grid-column: 1 / -1; }
   .usage { flex-wrap: wrap; }
   .upsell { flex-wrap: wrap; }
   .user-chip { display: none; }
@@ -565,6 +602,9 @@ a.locked-chip:hover { text-decoration: none; filter: brightness(0.97); }
   .join-row { flex-direction: column; padding: 8px; }
   .join-row input { height: 44px; }
   .join-row .btn { width: 100%; }
+  .ref-field { flex-wrap: wrap; padding: 8px; }
+  .ref-field input { flex-basis: 100%; padding: 0 4px; }
+  .ref-field .btn { flex: 1; }
   .tools { width: 100%; }
   .tools input { flex: 1; width: auto; }
   .share { min-width: 100%; }

@@ -1,4 +1,4 @@
-import { FREE_LIMIT, PRO_PRICE_EUR, isPro } from './plans.js';
+import { FREE_LIMIT, PRO_PRICE_EUR, REFERRAL_BOOST, isPro } from './plans.js';
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
@@ -287,7 +287,26 @@ ${nav(user, { sticky: true })}
 
 /* ---------------------------------------------------------- Page publique */
 
-export function publicPage({ list, count, status }) {
+/** Bloc « votre position + votre lien de parrainage », rempli côté serveur (sans JS) ou par public.js. */
+function referralBlock(me) {
+  const referrals = me?.referrals ?? 0;
+  return `<div class="my-rank" ${me ? '' : 'hidden'}>
+        <span class="rank-label">Votre position</span>
+        <strong class="rank-value"><span aria-hidden="true">n°</span><span data-position>${me?.position ?? ''}</span></strong>
+        <span class="rank-total">sur <span data-total>${me?.total ?? ''}</span></span>
+      </div>
+      <div class="referral" ${me ? '' : 'hidden'}>
+        <p class="referral-pitch"><strong>Montez dans la liste :</strong> chaque ami qui s’inscrit avec votre lien vous fait gagner ${REFERRAL_BOOST} places.</p>
+        <div class="copy-field ref-field">
+          <input readonly value="${esc(me?.refUrl ?? '')}" aria-label="Votre lien de parrainage" data-ref-url>
+          <button class="btn primary sm" type="button" data-copy-ref>Copier</button>
+          <button class="btn sm" type="button" data-share hidden>Partager</button>
+        </div>
+        <p class="referral-count" data-referrals>${referrals ? `<strong>${referrals}</strong> ${plural(referrals, 'ami parrainé', 'amis parrainés')} 🎉` : 'Aucun ami parrainé pour l’instant.'}</p>
+      </div>`;
+}
+
+export function publicPage({ list, count, status, me = null, ref = null }) {
   const joined = status === 'ok' || status === 'already';
   const proof =
     count > 0
@@ -308,7 +327,9 @@ ${aurora}
     <h1>${esc(list.title)}</h1>
     ${list.description ? `<p class="desc">${esc(list.description)}</p>` : ''}
 
+    ${ref && !joined ? '<p class="invited"><span aria-hidden="true">🎁</span> Un ami vous a invité·e : inscrivez-vous pour l’aider à monter dans la liste.</p>' : ''}
     <form class="join" method="post" action="/w/${esc(list.slug)}" ${joined ? 'hidden' : ''} novalidate>
+      ${ref ? `<input type="hidden" name="ref" value="${esc(ref)}">` : ''}
       <div class="hp" aria-hidden="true">
         <label>Ne pas remplir <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
       </div>
@@ -317,12 +338,14 @@ ${aurora}
         <button class="btn primary" type="submit"><span class="label">Rejoindre la liste</span><span class="spinner" aria-hidden="true"></span></button>
       </div>
       <p class="form-msg${errorMsg ? ' error' : ''}" role="status" aria-live="polite">${esc(errorMsg)}</p>
+      <p class="join-hint">Déjà inscrit·e ? Entrez votre email pour retrouver votre position et votre lien.</p>
     </form>
 
     <div class="success" ${joined ? '' : 'hidden'} role="status" aria-live="polite">
       <svg class="check" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="24"/><path d="M15 27l7 7 15-15"/></svg>
-      <h2 data-success-title>${status === 'already' ? 'Vous étiez déjà inscrit·e !' : 'Vous êtes sur la liste !'}</h2>
+      <h2 data-success-title>${status === 'already' ? 'Vous êtes déjà sur la liste !' : 'Vous êtes sur la liste !'}</h2>
       <p data-success-text>On vous prévient par email dès que c’est prêt.</p>
+      ${referralBlock(me)}
     </div>
 
     <p class="social-proof">
@@ -350,14 +373,17 @@ export function dashboard({ user, list, subscribers, baseUrl, flags }) {
 
   const pro = isPro(user);
   const lockedCount = subscribers.filter((s) => s.locked).length;
+  const viaReferral = subscribers.filter((s) => s.referred_by).length;
+  const refCell = (n) => `<td class="refs">${n ? `<span class="ref-badge" title="${n} ${plural(n, 'parrainage', 'parrainages')} : +${n * REFERRAL_BOOST} places">${n}</span>` : '<span class="muted">–</span>'}</td>`;
   const rows = subscribers
-    .map((s, i) =>
+    .map((s) =>
       s.locked
         ? // Inscrit verrouillé : l'email n'apparaît nulle part dans le HTML (ni texte, ni attribut).
           `
       <tr class="locked-row">
-        <td class="num">${total - i}</td>
+        <td class="num">${s.position}</td>
         <td class="email"><div class="email-cell"><span class="avatar lock" aria-hidden="true">${lockIcon}</span><span class="email-text masked">••••••••@••••••.••</span><a class="locked-chip" href="/billing">Pro</a></div></td>
+        ${refCell(s.referrals)}
         <td class="date"><time datetime="${esc(s.created_at)}">${esc(fmtDateFallback(s.created_at))}</time></td>
         <td class="actions">
           <form method="post" action="${base}/subscribers/${s.id}/delete" data-confirm="Retirer cet inscrit verrouillé de la liste ?">
@@ -369,8 +395,9 @@ export function dashboard({ user, list, subscribers, baseUrl, flags }) {
       </tr>`
         : `
       <tr data-email="${esc(s.email)}">
-        <td class="num">${total - i}</td>
+        <td class="num">${s.position}</td>
         <td class="email"><div class="email-cell"><span class="avatar" aria-hidden="true">${esc(s.email[0].toUpperCase())}</span><span class="email-text">${esc(s.email)}</span></div></td>
+        ${refCell(s.referrals)}
         <td class="date"><time datetime="${esc(s.created_at)}">${esc(fmtDateFallback(s.created_at))}</time></td>
         <td class="actions">
           <form method="post" action="${base}/subscribers/${s.id}/delete" data-confirm="Retirer ${esc(s.email)} de la liste ?">
@@ -453,6 +480,11 @@ ${nav(user, { sticky: true })}
       <strong class="stat-value" data-stat="week">–</strong>
       <span class="stat-sub" data-stat="week-sub">&nbsp;</span>
     </div>
+    <div class="card stat">
+      <span class="stat-label">Via parrainage</span>
+      <strong class="stat-value">${viaReferral}</strong>
+      <span class="stat-sub">${total ? `${Math.round((viaReferral / total) * 100)} % des inscrits` : 'aucun inscrit'}</span>
+    </div>
   </section>
 
   <section class="card chart-card">
@@ -469,7 +501,10 @@ ${nav(user, { sticky: true })}
 
   <section class="card subs">
     <header class="card-head">
-      <h2>Inscrits <span class="pill">${total}</span></h2>
+      <div>
+        <h2>Inscrits <span class="pill">${total}</span></h2>
+        <p class="muted">Classés par position : ordre d’inscription, +${REFERRAL_BOOST} places par ami parrainé.</p>
+      </div>
       <div class="tools">
         ${total ? `<input type="search" id="search" placeholder="Rechercher un email…" aria-label="Rechercher un email">` : ''}
         ${total > lockedCount ? `<a class="btn sm" href="${base}/export.csv" ${lockedCount ? 'title="Les inscrits verrouillés ne sont pas exportés"' : ''}>Exporter CSV${lockedCount ? ` (${total - lockedCount})` : ''}</a>` : ''}
@@ -478,7 +513,7 @@ ${nav(user, { sticky: true })}
     ${
       total
         ? `<div class="table-wrap"><table>
-        <thead><tr><th class="num">#</th><th>Email</th><th>Inscrit le</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+        <thead><tr><th class="num">Rang</th><th>Email</th><th class="refs">Parrainages</th><th>Inscrit le</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
       <p class="empty" id="no-match" hidden>Aucun email ne correspond à cette recherche.</p>`
